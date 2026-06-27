@@ -1,0 +1,129 @@
+[project]
+name = "sentinel"
+version = "0.1.0"
+description = "AI-Native DevSecOps & SRE Platform"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.12"
+
+dependencies = [
+    # --- API (Phase 0: demo app) ---
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "websockets>=14.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.6.0",
+    "httpx>=0.28.0",
+
+    # --- Observability (Phase 0) ---
+    "opentelemetry-api>=1.28.0",
+    "opentelemetry-sdk>=1.28.0",
+    "opentelemetry-exporter-otlp>=1.28.0",
+    "opentelemetry-instrumentation-fastapi>=0.49b0",
+    "structlog>=24.0.0",
+
+    # --- Utilities ---
+    "python-dotenv>=1.0.0",
+    "click>=8.1.0",
+    "tenacity>=9.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    # Linting & formatting
+    "ruff>=0.8.0",
+    "mypy>=1.13.0",
+    "pre-commit>=4.0.0",
+    # Testing
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "httpx>=0.28.0",
+]
+
+# Phase 1: RAG pipeline (heavy — installs PyTorch)
+rag = [
+    "llama-index>=0.12.0",
+    "qdrant-client>=1.12.0",
+    "sentence-transformers>=3.0.0",
+    "tree-sitter>=0.23.0",
+]
+
+# Phase 1: Database
+db = [
+    "sqlalchemy[asyncio]>=2.0.0",
+    "asyncpg>=0.30.0",
+    "alembic>=1.14.0",
+    "pgvector>=0.3.0",
+    "redis>=5.0.0",
+]
+
+# Phase 2: Agents
+agents = [
+    "litellm>=1.60.0",
+    "langchain-core>=0.3.0",
+    "langgraph>=0.2.0",
+]
+
+# ─────────────────────────────────────────────────────────────
+# Ruff (linter + formatter, replaces black + isort + flake8)
+# ─────────────────────────────────────────────────────────────
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["api", "rag", "agents"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+    "TCH",  # flake8-type-checking
+    "RUF",  # ruff-specific rules
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["sentinel_api", "sentinel_rag", "sentinel_agents"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+
+# ─────────────────────────────────────────────────────────────
+# Pytest
+# ─────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["api/tests", "rag/tests", "agents/tests"]
+asyncio_mode = "auto"
+addopts = "-v --tb=short"
+
+# ─────────────────────────────────────────────────────────────
+# Mypy
+# ─────────────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+# ─────────────────────────────────────────────────────────────
+# Build
+# ─────────────────────────────────────────────────────────────
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+# This is a monorepo — individual packages will have their own
+# pyproject.toml. This root file manages shared deps only.
+package = false
