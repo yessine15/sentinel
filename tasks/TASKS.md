@@ -29,7 +29,7 @@
 metrics, logs, and traces visible in Grafana. No AI yet — pure DevOps.
 
 ## M0.1 Repo & tooling bootstrap
-- [ ] **T0.1 Initialize git monorepo**
+- [x] **T0.1 Initialize git monorepo**
   - Goal: one repo, clear top-level folders.
   - Steps: `git init`; create `/operator /agents /rag /api /frontend /infra
     /gitops /docs /scripts`; add `.gitignore` (Python, Go, Node, Terraform,

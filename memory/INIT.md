@@ -26,6 +26,10 @@
 - [x] **PROJECT_IDEA_EXPLAINED.md** — beginner-friendly companion explaining
   every term and technology.
 - [x] **INIT.md** — this file, the LLM memory file.
+- [x] **TASKS.md** — full build plan decomposed into mini-tasks.
+- [x] **Monorepo initialized** — git repo, folder structure, .gitignore,
+  README.md (with Mermaid architecture diagram), MIT License.
+  Remote: `https://github.com/yessine15/sentinel.git`
 - [ ] Phase 0: Foundations (cluster + GitOps + observability).
 - [ ] Phase 1: RAG core.
 - [ ] Phase 2: Single agent SRE.
@@ -33,8 +37,8 @@
 - [ ] Phase 4: Security hardening.
 - [ ] Phase 5: Polish, evals, portfolio.
 
-> **We are at:** Pre-Phase 0. Nothing has been scaffolded yet. All we have is
-> the idea and explanations. Ready to begin building when the user says so.
+> **We are at:** Phase 0, task T0.1 complete. Monorepo structure is live on
+> GitHub. Next up: T0.2 (install local prerequisites).
 
 ---
 
