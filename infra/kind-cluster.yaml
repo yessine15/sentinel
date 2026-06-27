@@ -1,0 +1,62 @@
+# =============================================================
+# kind cluster config for Sentinel dev environment
+# Creates: 1 control-plane node + 2 worker nodes
+# Port mappings expose host ports -> container ports for Ingress
+# Usage: kind create cluster --config=infra/kind-cluster.yaml
+#
+# Find supported node images + digests per kind release:
+#   https://github.com/kubernetes-sigs/kind/releases
+# =============================================================
+
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: sentinel
+
+# Networking settings.
+# disableDefaultCNI=false uses kindnetd (fine for Phases 0-3).
+# Phase 4 swaps in Cilium by setting disableDefaultCNI=true.
+networking:
+  disableDefaultCNI: false
+  podSubnet: "10.244.0.0/16"
+  serviceSubnet: "10.96.0.0/12"
+
+# Nodes: 1 control-plane + 2 workers
+# Uses Kubernetes v1.32 (supported by kind v0.27+).
+# The control-plane is labeled ingress-ready so we can target it
+# with the ingress-nginx controller (nodeSelector/affinity) later.
+# Port mappings (host -> container) live on the control-plane node so
+# Ingress traffic on the host reaches the cluster.
+#   80/443       -> HTTP/HTTPS Ingress
+#   30080-30083  -> NodePort range for quick tests / port-forwards
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.32.0
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 80
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 443
+        protocol: TCP
+      - containerPort: 30080
+        hostPort: 30080
+        protocol: TCP
+      - containerPort: 30081
+        hostPort: 30081
+        protocol: TCP
+      - containerPort: 30082
+        hostPort: 30082
+        protocol: TCP
+      - containerPort: 30083
+        hostPort: 30083
+        protocol: TCP
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+  - role: worker
+    image: kindest/node:v1.32.0
+  - role: worker
+    image: kindest/node:v1.32.0
