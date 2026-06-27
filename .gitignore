@@ -1,0 +1,114 @@
+# =============================================================
+# Sentinel — .gitignore
+# Covers: Python, Go, Node/Next.js, Terraform, kind, Docker
+# =============================================================
+
+# ─────────────────────────────────────────────────────────────
+# OS & editors
+# ─────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.code-workspace
+
+# ─────────────────────────────────────────────────────────────
+# Python
+# ─────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+*.whl
+.venv/
+venv/
+env/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+.tox/
+.nox/
+
+# ─────────────────────────────────────────────────────────────
+# Go
+# ─────────────────────────────────────────────────────────────
+/bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+go.sum
+
+# ─────────────────────────────────────────────────────────────
+# Node / Next.js / TypeScript
+# ─────────────────────────────────────────────────────────────
+node_modules/
+.next/
+out/
+.nuxt/
+*.tsbuildinfo
+.env
+.env.local
+.env.*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ─────────────────────────────────────────────────────────────
+# Terraform / OpenTofu
+# ─────────────────────────────────────────────────────────────
+*.tfstate
+*.tfstate.backup
+*.tfplan
+.terraform/
+.terraform.lock.hcl
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+crash.log
+crash.*.log
+
+# ─────────────────────────────────────────────────────────────
+# Kubernetes / kind / Docker
+# ─────────────────────────────────────────────────────────────
+*.kubeconfig
+kind-logs/
+docker-compose.override.yml
+
+# ─────────────────────────────────────────────────────────────
+# Secrets & credentials (NEVER commit these)
+# ─────────────────────────────────────────────────────────────
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*credentials*.json
+*service-account*.json
+secrets.yaml
+.env.production
+.env.secrets
+
+# ─────────────────────────────────────────────────────────────
+# Misc
+# ─────────────────────────────────────────────────────────────
+tmp/
+tmpdir/
+*.tar.gz
+*.zip
