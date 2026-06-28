@@ -1,0 +1,23 @@
+# Frontend tsconfig — placeholder.
+#
+# The real Next.js app gets scaffolded with `npx create-next-app` in T2.6,
+# which generates a complete tsconfig.json. For Phase 0 this minimal file
+# exists so `tsc --noEmit` doesn't fail once real .ts/.tsx files appear.
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "jsx": "preserve",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "incremental": true
+  },
+  "include": ["**/*.ts", "**/*.tsx"],
+  "exclude": ["node_modules"]
+}
