@@ -1,0 +1,39 @@
+# =============================================================
+# App-of-Apps bootstrap Application for Sentinel
+#
+# This single Application is applied manually (kubectl apply) once,
+# immediately after installing ArgoCD. It tells ArgoCD to:
+#
+#   - Watch the `gitops/projects/` directory in this repo
+#   - Create one child Application for every subdirectory there
+#   - Auto-sync each child Application to the cluster
+#
+# So adding a new app = creating a new directory under gitops/projects/
+# with a manifest or Helm chart. ArgoCD picks it up automatically.
+#
+# Repo URL + revision are filled in by scripts/install-argocd.sh
+# (it uses sed substitution) OR can be applied directly via envsubst.
+# =============================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+  finalizers:
+    # Ensure child Applications are cleaned up if the root is deleted.
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/yessine15/sentinel.git
+    targetRevision: main
+    path: gitops/argocd/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

@@ -27,6 +27,11 @@ controller:
       operator: Equal
       effect: NoSchedule
 
+  # Enable SSL passthrough — required for ArgoCD which serves its own HTTPS.
+  # Without this, ingress-nginx terminates TLS and ArgoCD redirect-loops.
+  extraArgs:
+    enable-ssl-passthrough: ""
+
   # Disable the admission webhook to keep things simple for local dev.
   admissionWebhooks:
     enabled: false
