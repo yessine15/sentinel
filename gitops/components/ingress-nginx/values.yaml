@@ -1,0 +1,48 @@
+# =============================================================
+# ingress-nginx Helm values for Sentinel (kind)
+#
+# kind-specific notes:
+#  - hostNetwork: true  lets the controller bind directly to the node's
+#    ports 80/443, which we exposed via extraPortMappings in the kind config.
+#  - nodeSelector: ingress-ready=true  targets the control-plane node that
+#    has the port mappings.
+#  - kind is a single-node-for-ingress setup; tolerance for not-yet-tainted
+#    control-plane is included.
+# =============================================================
+
+controller:
+  # Run on the host network so we can reach 80/443 from outside the cluster.
+  hostNetwork: true
+
+  # Use a NodePort-less deployment; rely on hostNetwork for traffic.
+  kind: Deployment
+
+  # Schedule on the control-plane node that has the port mappings.
+  nodeSelector:
+    ingress-ready: "true"
+
+  # kind's control-plane has a NoSchedule taint by default; tolerate it.
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Equal
+      effect: NoSchedule
+
+  # Disable the admission webhook to keep things simple for local dev.
+  admissionWebhooks:
+    enabled: false
+
+  # Resource requests — keep modest for local dev.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+  # kind containers don't support real Service type=LoadBalancer; keep ClusterIP.
+  service:
+    type: ClusterIP
+
+# No dashboard needed for dev.
+controller-WatchIngressWithoutClass: true
