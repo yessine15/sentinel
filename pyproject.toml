@@ -105,6 +105,9 @@ skip-magic-trailing-comma = false
 testpaths = ["api/tests", "rag/tests", "agents/tests"]
 asyncio_mode = "auto"
 addopts = "-v --tb=short"
+# Make our packages importable from the tests without needing an
+# editable install. Each app's package sits one level under its app dir.
+pythonpath = ["api", "rag", "agents"]
 
 # ─────────────────────────────────────────────────────────────
 # Mypy

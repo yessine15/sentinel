@@ -1,0 +1,207 @@
+# =============================================================
+# CI — Sentinel
+#
+# Runs on every push to main and on every PR.
+# Jobs run in parallel; each fails independently.
+#
+# Jobs:
+#   python     — ruff lint + format check + pytest (api, rag, agents)
+#   go         — gofmt check + go vet + go test (operator)
+#   frontend   — prettier check + next lint + next build
+#   manifests  — helm lint all charts + kustomize build all bases
+#   security   — trivy filesystem scan + tfsec for Terraform
+# =============================================================
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-progress runs of the same PR/branch when new commits arrive.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python (ruff + pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.5.x"
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --extra dev --all-extras
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: Ruff format check
+        run: uv run ruff format --check .
+
+      - name: Pytest
+        run: uv run pytest -q
+
+  go:
+    name: Go (gofmt + vet + test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: operator
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: operator/go.sum
+
+      - name: gofmt check (no diffs allowed)
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "::error::gofmt would modify these files:"
+            gofmt -l .
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test -v ./...
+
+  frontend:
+    name: Frontend (prettier + lint + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prettier check
+        run: npx prettier --check .
+
+      - name: Next lint
+        run: npm run lint
+        continue-on-error: true # OK to warn for now; the app doesn't exist yet.
+
+      - name: Type check
+        run: npm run type-check
+        continue-on-error: true # No tsconfig yet — passes through Phase 0.
+
+      - name: Build
+        run: npm run build
+        continue-on-error: true # No real app to build yet — passes through Phase 0.
+
+  manifests:
+    name: GitOps (helm + kustomize)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "v3.14.0"
+
+      - name: Set up kustomize
+        run: |
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          sudo mv kustomize /usr/local/bin/
+
+      - name: Helm lint all charts
+        run: |
+          set -e
+          for chart in gitops/projects/*/; do
+            if [ -f "$chart/Chart.yaml" ]; then
+              echo "::group::helm lint $chart"
+              helm lint "$chart"
+              echo "::endgroup::"
+            fi
+          done
+
+      - name: Kustomize build bases
+        run: |
+          for kdir in gitops/base/*/; do
+            if [ -f "$kdir/kustomization.yaml" ]; then
+              echo "::group::kustomize build $kdir"
+              kustomize build "$kdir" >/dev/null
+              echo "::endgroup::"
+            fi
+          done
+
+      # Validate YAML syntax of all our values/manifest files. A bad
+      # indent in a Helm values file shouldn't wait until ArgoCD tries to
+      # sync it to fail.
+      - name: YAML lint
+        run: |
+          python3 - <<'PY'
+          import sys, glob, yaml
+          patterns = [
+              "gitops/components/*/values.yaml",
+              "gitops/projects/*/values.yaml",
+              "gitops/base/**/labels.yaml",
+              "gitops/base/**/namespaces.yaml",
+          ]
+          files = set()
+          for p in patterns:
+              files.update(glob.glob(p, recursive=True))
+          errors = 0
+          for f in sorted(files):
+              try:
+                  with open(f) as fh:
+                      list(yaml.safe_load_all(fh))
+                  print(f"OK  {f}")
+              except yaml.YAMLError as e:
+                  print(f"ERR {f}: {e}")
+                  errors += 1
+          sys.exit(1 if errors else 0)
+          PY
+
+  security:
+    name: Security (Trivy + tfsec)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Trivy wants full history for accurate git-based scans.
+          fetch-depth: 0
+
+      - name: Trivy filesystem scan (repo)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          # Fail on CRITICAL only — HIGH+ grows noisy in a dev repo.
+          severity: CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+
+      - name: tfsec — Terraform static analysis
+        uses: aquasecurity/tfsec-action@v1.0.0
+        with:
+          # No Terraform yet — this will pass-through silently for now.
+          # Once we add infra/ Terraform files it will lint them.
+          additional_args: "--soft-fail"
