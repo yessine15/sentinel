@@ -1,0 +1,88 @@
+# =============================================================
+# ArgoCD Helm values for Sentinel (local kind dev)
+#
+# Exposes ArgoCD UI at http://argocd.local via the cluster's
+# ingress-nginx controller installed in T0.5.
+# =============================================================
+
+# Global ArgoCD settings
+global:
+  domain: argocd.local
+
+server:
+  # Expose via Ingress (we have ingress-nginx)
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hostname: argocd.local
+    # SSL passthrough so nginx hands the raw TLS connection to argocd-server.
+    # Required because ArgoCD serves its own HTTPS internally.
+    annotations:
+      nginx.ingress.kubernetes.io/ssl-passthrough: "true"
+      nginx.ingress.kubernetes.io/backend-protocol: HTTPS
+    # No separate TLS cert — ArgoCD's self-signed cert is used (passthrough).
+    tls: false
+
+  # Disable ArgoCD's own HTTPS termination at the server — let the ingress
+  # passthrough handle it. We keep insecure:false so the server still serves
+  # HTTPS on 443, which nginx forwards to via ssl-passthrough.
+  insecure: false
+
+  # Modest resources for dev.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+configs:
+  # Git URL of this monorepo. The bootstrap Application points at a path
+  # inside it for App-of-Apps.
+  # We fill in the URL in the script (or override with --set).
+  credentialTemplates:
+
+# Smaller repo-server / controller resources for local dev.
+controller:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+repoServer:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+applicationSet:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 32Mi
+    limits:
+      cpu: 250m
+      memory: 128Mi
+
+# Disable notifications and dex for now; minimises footprint.
+notifications:
+  enabled: false
+dex:
+  enabled: false
+
+# Redis for ArgoCD cache (tiny dev footprint).
+redis:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 16Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
