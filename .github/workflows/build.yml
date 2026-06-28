@@ -1,0 +1,100 @@
+# =============================================================
+# Container build pipeline for the Sentinel demo API
+#
+# Triggers:
+#   - Push of a tag matching v*           -> build + push with that tag
+#   - Push to main                        -> build + push as "main" + "latest"
+#
+# Image: ghcr.io/<owner>/sentinel-demo-api:<tag>
+#
+# The GITHUB_TOKEN auto-provided by Actions is used for auth to GHCR;
+# we just need to grant `packages: write` at the workflow level.
+# =============================================================
+name: Build demo-api image
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  # Allow manual triggering from the Actions UI for testing.
+  workflow_dispatch:
+
+# Refuse concurrent runs of this workflow on the same ref — last one wins.
+concurrency:
+  group: build-demo-api-${{ github.ref }}
+  cancel-in-progress: true
+
+# Permission for the auto-issued GITHUB_TOKEN to push to GHCR.
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    name: Build & push image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Derive meta (tags + labels) from the Git ref. This action computes:
+      #   - On a tag v0.1.0  -> type=semver,pattern=v{{version}}  -> v0.1.0
+      #   - On a tag v0.1.0  -> type=semver,pattern={{major}}.{{minor}} -> 0.1
+      #   - On main          -> type=ref,event=branch             -> main
+      #   - On main          -> type=raw,value=latest             -> latest
+      # It also fills OCI labels (org.opencontainers.image.source, etc).
+      - name: Compute image tags & labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/sentinel-demo-api
+          tags: |
+            type=semver,pattern={{raw}}
+            type=semver,pattern=v{{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=ref,event=branch
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          # For Phase 0 we only build for linux/amd64 — the kind cluster
+          # runs amd64. Add linux/arm64 in T5.8 if we deploy to a cloud
+          # that needs it.
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Cache across runs using GitHub Actions cache — speeds up
+          # rebuilds a lot when only app code changed.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Build-time variables exposed to the Dockerfile if needed.
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+
+      - name: Image summary
+        run: |
+          echo "### Built image" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Tags:" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Labels:" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta.outputs.labels }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

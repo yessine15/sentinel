@@ -1,0 +1,45 @@
+# Don't ship these into the Docker build context — keeps builds fast and
+# the image small. Anything not listed here WILL be available during build.
+
+# Version control
+.git
+.gitignore
+
+# Editor / OS noise
+.vscode
+.idea
+.DS_Store
+
+# Python virtual envs and caches (we install fresh inside the container)
+.venv
+venv
+__pycache__
+*.py[cod]
+.ruff_cache
+.mypy_cache
+.pytest_cache
+htmlcov
+.coverage
+
+# Node — the API image never needs frontend files
+node_modules
+frontend/.next
+frontend/node_modules
+
+# Local cluster / kind artifacts
+kind-logs
+
+# Docs, memory, tasks — not needed at runtime
+docs
+memory
+tasks
+README.md
+LICENSE
+
+# Secrets (defence in depth — these are gitignored too)
+*.pem
+*.key
+*.crt
+.env
+.env.*
+secrets.yaml
