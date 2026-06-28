@@ -1,0 +1,57 @@
+# =============================================================
+# demo-api Helm values (local dev / kind)
+#
+# These are defaults for the local kind cluster. values-prod.yaml will
+# override image registries, replicas, and resource limits for cloud.
+# =============================================================
+
+# Number of replicas. For local dev 1 is enough.
+replicaCount: 1
+
+image:
+  # Set in T0.13 once the Dockerfile exists and CI pushes to GHCR.
+  # For now this placeholder lets ArgoCD render the chart without errors.
+  repository: ghcr.io/yessine15/sentinel-demo-api
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+# Resources for local dev — keep tiny.
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 250m
+    memory: 128Mi
+
+# Service — exposed inside the cluster on port 80 -> container 8000.
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8000
+
+# Ingress — the demo app is the root `sentinel.local` host.
+ingress:
+  enabled: true
+  className: nginx
+  hostname: sentinel.local
+  path: /
+  tls:
+    enabled: false
+
+# OTel exporter endpoint — filled in once the OTel collector exists (T0.12).
+otel:
+  exporterEndpoint: http://otel-collector.observability.svc:4318
+
+# Probes — standard FastAPI health endpoints.
+probes:
+  liveness:
+    httpGet:
+      path: /healthz
+      port: 8000
+    initialDelaySeconds: 5
+  readiness:
+    httpGet:
+      path: /readyz
+      port: 8000
+    initialDelaySeconds: 5

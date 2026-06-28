@@ -1,0 +1,50 @@
+# =============================================================
+# Base: namespaces
+#
+# Every Sentinel namespace lives here so every project/component
+# can pull it in via Kustomize `resources:` and we keep a single
+# source of truth for namespaces across the cluster.
+#
+# Conventions:
+#   - Each app gets its own namespace (defence in depth, blast-radius).
+#   - Namespaces carry a label `app.kubernetes.io/part-of: sentinel`
+#     so we can query "all Sentinel things" cluster-wide.
+#   - Namespaces carry `pod-security.kubernetes.io/enforce: baseline`
+#     so any pod in them must follow baseline Pod Security Standards
+#     (no privileged, no hostNetwork, etc.). Phase 4 hardens to
+#     "restricted".
+# =============================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sentinel
+  labels:
+    app.kubernetes.io/part-of: sentinel
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: observability
+  labels:
+    app.kubernetes.io/part-of: sentinel
+    # Observability stack pods (Prometheus exporter, node-exporter) need
+    # slightly more privileges — keep privileged here for Phase 0/1.
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/warn: baseline
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argocd
+  labels:
+    app.kubernetes.io/part-of: sentinel
+    # ArgoCD was installed by the Helm chart in its own namespace already.
+    # This entry exists so Kustomize "knows" about it; if it already exists,
+    # applying this is a no-op (server-side apply reconciles labels).
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/warn: baseline
