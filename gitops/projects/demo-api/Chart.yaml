@@ -1,0 +1,20 @@
+# =============================================================
+# demo-api — placeholder Helm chart
+#
+# The actual FastAPI app (metrics + logs + traces) lands here in T0.13.
+# For T0.7 we just want a skeleton so the GitOps convention is clear
+# and ArgoCD has something to sync.
+#
+# Once the real app exists:
+#   - Chart.yaml version bumps per release
+#   - appVersion tracks the image tag we push to GHCR
+# =============================================================
+apiVersion: v2
+name: demo-api
+description: Sentinel demo API — a tiny FastAPI service emitting metrics, logs, and traces for the observability stack.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+maintainers:
+  - name: yessine15
+    url: https://github.com/yessine15

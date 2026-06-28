@@ -1,0 +1,89 @@
+{{- /*
+  Namespace for the demo-api app.
+  We don't create it here (it lives in base/namespaces/namespaces.yaml).
+  Helm just targets it.
+*/ -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-api
+  namespace: sentinel
+  labels:
+    app.kubernetes.io/name: demo-api
+    app.kubernetes.io/part-of: sentinel
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: demo-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: demo-api
+        app.kubernetes.io/part-of: sentinel
+    spec:
+      containers:
+        - name: api
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.otel.exporterEndpoint | quote }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.probes.liveness }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.probes.readiness }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-api
+  namespace: sentinel
+  labels:
+    app.kubernetes.io/name: demo-api
+    app.kubernetes.io/part-of: sentinel
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: {{ .Values.service.targetPort }}
+      protocol: TCP
+      name: http
+  selector:
+    app.kubernetes.io/name: demo-api
+{{- if .Values.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: demo-api
+  namespace: sentinel
+  labels:
+    app.kubernetes.io/name: demo-api
+    app.kubernetes.io/part-of: sentinel
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.ingress.hostname }}
+      http:
+        paths:
+          - path: {{ .Values.ingress.path }}
+            pathType: Prefix
+            backend:
+              service:
+                name: demo-api
+                port:
+                  number: {{ .Values.service.port }}
+{{- end }}

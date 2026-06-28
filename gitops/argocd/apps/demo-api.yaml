@@ -1,0 +1,42 @@
+# =============================================================
+# ArgoCD Application: demo-api
+#
+# This file lives under gitops/argocd/apps/ so the root Application
+# (root.yaml) discovers it and creates this demo-api Application.
+# That Application, in turn, syncs the Helm chart in
+# gitops/projects/demo-api/ into the cluster.
+#
+# Once the real Docker image exists (T0.13), ArgoCD will keep the
+# Deployment in sync with whatever tag is in values.yaml here.
+# =============================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo-api
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/yessine15/sentinel.git
+    targetRevision: main
+    path: gitops/projects/demo-api
+    # Helm source — tells ArgoCD to render the chart with these values
+    # rather than treating the folder as raw manifests.
+    plugin:
+      env:
+        - name: HELM_RELEASE_NAME
+          value: demo-api
+  destination:
+    server: https://kubernetes.default.svc
+    # The chart targets namespaces inside the manifests, so this is
+    # just the default. The real target is `sentinel` (see templates).
+    namespace: sentinel
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

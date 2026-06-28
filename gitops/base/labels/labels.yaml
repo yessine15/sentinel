@@ -1,0 +1,28 @@
+# =============================================================
+# Base: labels
+#
+# A shared Kustomize component that injects common labels into every
+# resource that pulls it in via `components:`. This guarantees every
+# Sentinel object is identifiable cluster-wide:
+#
+#   kubectl get all -A -l app.kubernetes.io/part-of=sentinel
+#
+# Usage in a project's kustomization.yaml:
+#   components:
+#     - ../../base/labels
+# =============================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Component
+
+# Labels applied to ALL resources (metadata + selector templates).
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: sentinel
+      app.kubernetes.io/managed-by: argocd
+    includeSelectors: true
+    includeTemplates: true
+
+# Common annotations for everything.
+annotations:
+  - pairs:
+      sentinel.io/repo: https://github.com/yessine15/sentinel
