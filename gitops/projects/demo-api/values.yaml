@@ -37,11 +37,10 @@ ingress:
   tls:
     enabled: false
 
-# OTel exporter endpoint — OTLP gRPC to the collector.
-# The collector listens on :4317 (gRPC) and :4318 (HTTP).
-# The Python OTLPSpanExporter uses HTTP/protobuf by default → :4318.
+# OTel exporter endpoint — OTLP HTTP to the collector.
+# The collector service is named otel-collector-opentelemetry-collector.
 otel:
-  exporterEndpoint: http://otel-collector.observability:4318
+  exporterEndpoint: http://otel-collector-opentelemetry-collector.observability.svc:4318
 
 # Probes — standard FastAPI health endpoints.
 probes:
