@@ -66,6 +66,13 @@ grafana:
       basicAuth: false
       isDefault: false
       editable: true
+    - name: Tempo
+      type: tempo
+      access: proxy
+      url: http://tempo.observability:3200
+      basicAuth: false
+      isDefault: false
+      editable: true
 
 # --- Prometheus ------------------------------------------------
 prometheus:
