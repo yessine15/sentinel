@@ -1,0 +1,81 @@
+# =============================================================
+# Grafana Tempo Helm values for Sentinel (local kind)
+#
+# Tempo is a distributed tracing backend — think "Prometheus for traces".
+# It stores the journey of a request across multiple services as a trace
+# (a tree of spans).
+#
+# For local dev we run Tempo in single-binary mode with filesystem storage.
+# Production would use the microservices mode with separate ingester,
+# querier, compactor, etc.
+# =============================================================
+
+# Tempo server configuration
+tempo:
+  # Resource tuning for dev.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 400m
+      memory: 512Mi
+
+  # Retention — keep traces for 3 days (same as Prometheus metrics).
+  retention: 72h
+
+  # Storage backend — filesystem for local dev.
+  storage:
+    trace:
+      backend: local
+      local:
+        path: /var/tempo/traces
+      wal:
+        path: /var/tempo/wal
+
+  # Receivers — accept traces via OTLP (the standard OpenTelemetry protocol).
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: "0.0.0.0:4317"
+        http:
+          endpoint: "0.0.0.0:4318"
+
+  # Metrics generator — generate Prometheus metrics from trace data
+  # (RED metrics: Rate, Errors, Duration). Prometheus can then scrape these.
+  metricsGenerator:
+    enabled: true
+    remoteWriteUrl: "http://kube-prometheus-stack-prometheus.observability:9090/api/v1/write"
+
+  # Query frontend — Tempo's built-in query frontend for Grafana.
+  # NOTE: In the Grafana Tempo Helm chart, queryFrontend does NOT
+  # use an "enabled" field. The component is controlled via the
+  # main `tempo.reportingEnabled` setting. If you disable it here,
+  # the chart configures it appropriately.
+  # We leave it unset so the chart uses its default (enabled).
+  # queryFrontend:
+  #   replicas: 1
+
+# Persistence — keep traces across pod restarts.
+persistence:
+  enabled: true
+  storageClassName: standard
+  size: 2Gi
+  accessModes:
+    - ReadWriteOnce
+
+# ServiceMonitor — so Prometheus scrapes Tempo's own metrics.
+serviceMonitor:
+  enabled: true
+  labels:
+    release: kube-prometheus-stack
+
+# No ingress needed — Grafana queries Tempo internally via the service URL.
+# We don't need a tempo.local Ingress for Phase 0.
+ingress:
+  enabled: false
+
+# Disable the test pod.
+test:
+  enabled: false

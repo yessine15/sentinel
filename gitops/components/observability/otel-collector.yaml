@@ -1,0 +1,67 @@
+# =============================================================
+# OpenTelemetry Collector Helm values for Sentinel (local kind)
+#
+# The OTel Collector is a vendor-neutral telemetry pipeline. It receives
+# telemetry data (traces, metrics, logs) from instrumented apps via OTLP
+# (the standard protocol) and forwards it to backends like Tempo.
+#
+# Why a separate collector? Apps don't talk to Tempo directly — they send
+# OTLP data to the collector, which handles buffering, batching, retries,
+# and routing. This is the "one endpoint for all telemetry" pattern.
+# =============================================================
+
+mode: deployment
+
+replicaCount: 1
+
+image:
+  repository: otel/opentelemetry-collector-contrib
+  tag: "0.114.0"
+
+resources:
+  requests:
+    cpu: 20m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+
+service:
+  enabled: true
+  type: ClusterIP
+
+# Full collector configuration — this is the OTel Collector's own config YAML,
+# embedded as a map under the `config` key.
+config: The Helm chart renders it into
+# /etc/otel/config.yaml.
+config:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+  processors:
+    batch:
+      timeout: 5s
+      send_batch_size: 1024
+
+  exporters:
+    otlp/tempo:
+      endpoint: tempo.observability:4317
+      tls:
+        insecure: true
+
+  extensions:
+    health_check:
+      endpoint: 0.0.0.0:13133
+
+  service:
+    extensions: [health_check]
+    pipelines:
+      traces:
+        receivers: [otlp]
+        processors: [batch]
+        exporters: [otlp/tempo]
