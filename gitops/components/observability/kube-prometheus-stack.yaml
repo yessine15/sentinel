@@ -56,14 +56,16 @@ grafana:
 
   # The kube-prometheus-stack chart ALREADY ships a Prometheus datasource
   # configured as the default (pointing at the in-cluster Prometheus).
-  # We don't need to add our own — that created a "only one datasource
-  # can be default" provisioning error. Override the URL only if needed;
-  # otherwise leave the chart's default alone (it's correct).
-  #
-  # Previously we tried to add a second default datasource here, which
-  # crashed Grafana at startup. Lesson: check what the chart already
-  # provisions before layering on top.
-  # datasources: {}
+  # Additional datasources (Loki, Tempo) go here as non-default entries
+  # so Grafana can query them from "Explore".
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      access: proxy
+      url: http://loki.observability:3100
+      basicAuth: false
+      isDefault: false
+      editable: true
 
 # --- Prometheus ------------------------------------------------
 prometheus:

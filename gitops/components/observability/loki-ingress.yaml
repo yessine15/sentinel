@@ -1,0 +1,30 @@
+# =============================================================
+# Loki Ingress — standalone manifest
+#
+# Lives outside the Helm chart because the loki-stack chart's built-in
+# ingress template has a rigid structure that doesn't match our needs.
+#
+# Applied separately after the Helm install/upgrade:
+#   kubectl apply -f gitops/components/observability/loki-ingress.yaml
+# =============================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: loki
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: loki
+    app.kubernetes.io/part-of: sentinel
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: loki.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: loki
+                port:
+                  number: 3100
