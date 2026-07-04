@@ -1,0 +1,17 @@
+# =============================================================
+# Qdrant — Helm chart wrapper for Sentinel
+#
+# This Chart.yaml declares a dependency on the upstream Qdrant Helm
+# chart so that ArgoCD (or a local `helm dependency update && helm
+# install`) can deploy Qdrant using our values overrides.
+# =============================================================
+apiVersion: v2
+name: qdrant
+description: Qdrant vector database for Sentinel RAG pipeline
+version: 0.1.0
+type: application
+
+dependencies:
+  - name: qdrant
+    version: "1.13.5"
+    repository: https://qdrant.github.io/qdrant-helm

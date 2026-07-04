@@ -1,0 +1,35 @@
+# =============================================================
+# ArgoCD Application: qdrant
+#
+# Deploys Qdrant vector database via the upstream Helm chart with
+# our values overrides. Lives under the `qdrant` namespace.
+#
+# The chart wrapper is in gitops/components/qdrant/ — it depends
+# on the upstream qdrant/qdrant chart and applies our values.yaml
+# overrides.
+# =============================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: qdrant
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/yessine15/sentinel.git
+    targetRevision: main
+    path: gitops/components/qdrant
+    helm:
+      valueFiles:
+        - values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: qdrant
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

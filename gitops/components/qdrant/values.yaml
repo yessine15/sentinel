@@ -1,0 +1,76 @@
+# =============================================================
+# Qdrant values for Sentinel (local kind)
+#
+# Single-replica Qdrant with persistent storage, exposed at
+# http://qdrant.local via ingress-nginx. Auth disabled for
+# local development.
+#
+# Chart: qdrant/qdrant (https://qdrant.github.io/qdrant-helm)
+# =============================================================
+
+# Override the upstream qdrant subchart values.
+qdrant:
+  # --- Single node (no distributed cluster) ----------------------
+  replicaCount: 1
+
+  # --- Image -----------------------------------------------------
+  image:
+    tag: "v1.13.5"
+
+  # --- Service (ClusterIP, no API key) ---------------------------
+  service:
+    type: ClusterIP
+
+  # --- Disable API key for local dev -----------------------------
+  apiKey: ""
+
+  # --- Persistence -----------------------------------------------
+  persistence:
+    enabled: true
+    size: 2Gi
+    storageClassName: standard
+    accessModes:
+      - ReadWriteOnce
+
+  # --- Ingress (REST API only) -----------------------------------
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hosts:
+      - host: qdrant.local
+        paths:
+          - path: /
+            pathType: Prefix
+            servicePort: 6333
+
+  # --- Config (single node, no clustering) -----------------------
+  config:
+    cluster:
+      enabled: false
+
+  # --- Resources (tuned for dev) ---------------------------------
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  # --- Probes ----------------------------------------------------
+  livenessProbe:
+    enabled: true
+    initialDelaySeconds: 30
+  readinessProbe:
+    enabled: true
+    initialDelaySeconds: 10
+
+  # --- Metrics (scraped by Prometheus) ---------------------------
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: kube-prometheus-stack
+
+  # --- Disable test pods (not needed for dev) --------------------
+  tests:
+    enabled: false
