@@ -1,0 +1,123 @@
+# =============================================================
+# Loki + Promtail values for Sentinel (local kind)
+#
+# Uses the grafana/loki-stack chart which bundles:
+#   - Loki (log aggregation — stores + indexes log lines)
+#   - Promtail (log shipper — reads container logs from disk)
+#
+# The loki-stack chart is simpler than the standalone loki chart (which
+# requires S3-compatible storage in its 3.x versions). For local dev,
+# loki-stack runs Loki in filesystem mode out of the box.
+# =============================================================
+
+loki:
+  # Run Loki in single-replica mode with filesystem storage.
+  persistence:
+    enabled: true
+    storageClass: standard
+    size: 2Gi
+    accessModes:
+      - ReadWriteOnce
+
+  # Resource tuning for dev.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 400m
+      memory: 512Mi
+
+  # Auth — disabled for local dev.
+  config:
+    auth_enabled: false
+
+  # ServiceMonitor for Prometheus to scrape Loki's own metrics.
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: kube-prometheus-stack
+
+  # We create the Loki Ingress as a standalone Kubernetes manifest
+  # (gitops/components/observability/loki-ingress.yaml) because the
+  # loki-stack chart's built-in ingress template has a rigid structure
+  # that doesn't match our needs. Apply separately after install:
+  #   kubectl apply -f gitops/components/observability/loki-ingress.yaml
+
+promtail:
+  # Resources — keep modest for local dev. Promtail runs as a DaemonSet
+  # (one pod per node) so these apply per node.
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+  # Tolerate the control-plane taint so Promtail runs on ALL nodes.
+  tolerations:
+    - operator: Exists
+
+  # Override the default config to only watch Sentinel-relevant namespaces,
+  # avoiding "too many open files" on kind nodes which have many system pods.
+  config:
+    file: |-
+      server:
+        http_listen_port: 8080
+        grpc_listen_port: 0
+        log_level: info
+
+      positions:
+        filename: /run/promtail/positions.yaml
+
+      clients:
+        - url: http://loki.observability:3100/loki/api/v1/push
+          external_labels:
+            cluster: sentinel
+
+      scrape_configs:
+        - job_name: kubernetes-pods-sentinel
+          pipeline_stages:
+            - docker: {}
+          kubernetes_sd_configs:
+            - role: pod
+              namespaces:
+                names:
+                  - sentinel
+                  - observability
+                  - argocd
+                  - ingress-nginx
+                  - kube-system
+          relabel_configs:
+            - source_labels:
+                - __meta_kubernetes_namespace
+              action: keep
+              regex: (sentinel|observability|argocd|ingress-nginx|kube-system)
+            - source_labels:
+                - __meta_kubernetes_pod_label_app_kubernetes_io_name
+                - __meta_kubernetes_pod_label_app
+                - __meta_kubernetes_pod_name
+              regex: ^;*([^;]+)(;.*)?$
+              action: replace
+              target_label: app
+            - source_labels:
+                - __meta_kubernetes_namespace
+              action: replace
+              target_label: namespace
+            - source_labels:
+                - __meta_kubernetes_pod_name
+              action: replace
+              target_label: pod
+            - source_labels:
+                - __meta_kubernetes_pod_container_name
+              action: replace
+              target_label: container
+            - replacement: /var/log/pods/*$1/*.log
+              separator: /
+              source_labels:
+                - __meta_kubernetes_pod_uid
+                - __meta_kubernetes_pod_container_name
+              target_label: __path__
+
+
