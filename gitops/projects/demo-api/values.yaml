@@ -10,7 +10,7 @@ replicaCount: 1
 
 image:
   repository: ghcr.io/yessine15/sentinel-demo-api
-  tag: "v0.1.1"
+  tag: "v0.1.2"
   pullPolicy: IfNotPresent
 
 # Resources for local dev — keep tiny.
