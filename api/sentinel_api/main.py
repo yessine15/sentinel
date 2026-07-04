@@ -37,7 +37,7 @@ __version__ = "0.1.1"
 # ── Configure OpenTelemetry tracing ────────────────────────
 OTEL_ENDPOINT = os.environ.get(
     "OTEL_EXPORTER_OTLP_ENDPOINT",
-    "http://otel-collector.observability:4318",
+    "http://otel-collector-opentelemetry-collector.observability.svc.cluster.local:4318",
 )
 OTEL_SERVICE_NAME = os.environ.get("OTEL_SERVICE_NAME", "sentinel-demo-api")
 
