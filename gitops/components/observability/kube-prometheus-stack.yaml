@@ -1,0 +1,135 @@
+# =============================================================
+# kube-prometheus-stack Helm values for Sentinel (local kind)
+#
+# This chart bundles: Prometheus + Alertmanager + Grafana + node-exporter
+# + kube-state-metrics. Big chart, lots of defaults; we override only what
+# matters for our local kind cluster.
+# =============================================================
+
+# --- Grafana ---------------------------------------------------
+grafana:
+  # Expose Grafana at http://grafana.local via our ingress-nginx.
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hosts:
+      - grafana.local
+    path: /
+    # No TLS for local dev.
+    tls: []
+
+  # Default admin credentials. Documented in docs/phase0.md.
+  adminUser: admin
+  adminPassword: admin
+
+  # Smaller footprint for local dev.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+  # Disable test pods we don't need.
+  testFramework:
+    enabled: false
+
+  # Grafana can take a while to start on kind (image pull + migrations).
+  # Give the liveness probe a generous initial delay so we don't enter
+  # CrashLoopBackOff before Grafana is actually ready.
+  livenessProbe:
+    initialDelaySeconds: 120
+    timeoutSeconds: 5
+    failureThreshold: 10
+  readinessProbe:
+    initialDelaySeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 10
+
+  # Persistence — keep dashboards across restarts. kind's local-path
+  # provisioner provides the PV automatically.
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClassName: standard
+
+  # The kube-prometheus-stack chart ALREADY ships a Prometheus datasource
+  # configured as the default (pointing at the in-cluster Prometheus).
+  # We don't need to add our own — that created a "only one datasource
+  # can be default" provisioning error. Override the URL only if needed;
+  # otherwise leave the chart's default alone (it's correct).
+  #
+  # Previously we tried to add a second default datasource here, which
+  # crashed Grafana at startup. Lesson: check what the chart already
+  # provisions before layering on top.
+  # datasources: {}
+
+# --- Prometheus ------------------------------------------------
+prometheus:
+  prometheusSpec:
+    # Small retention for local dev.
+    retention: 3d
+
+    # Smaller storage.
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: standard
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 2Gi
+
+    # Modest resources.
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+    # Don't watch every namespace — we only care about ours + kube-system.
+    # (Default covers everything; fine to leave alone, but explicit is
+    # better for a portfolio project.)
+
+# --- Alertmanager ----------------------------------------------
+alertmanager:
+  # Smaller config for dev. We'll wire real routes in Phase 5.
+  alertmanagerSpec:
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 64Mi
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: standard
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 100Mi
+
+# --- node-exporter ( DaemonSet on every node) -----------------
+# Default settings are fine for kind. Keep it enabled.
+
+# --- kube-state-metrics ---------------------------------------
+# Default settings fine.
+
+# --- Disable things we don't need in local dev ----------------
+# Disable the kubelet scraping of cAdvisor metrics on secure port; kind
+# uses self-signed certs that complicate this. Default handling works.
+
+# Default rules (alerting rules that ship with the chart) — keep enabled
+# so we get the standard "NodeMemoryPressure", "PodCrashLooping" etc.
+defaultRules:
+  create: true
+
+# Global settings
+global:
+  # kind cluster domain
+  clusterDomain: cluster.local

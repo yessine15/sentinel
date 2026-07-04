@@ -22,16 +22,16 @@ spec:
     repoURL: https://github.com/yessine15/sentinel.git
     targetRevision: main
     path: gitops/projects/demo-api
-    # Helm source — tells ArgoCD to render the chart with these values
-    # rather than treating the folder as raw manifests.
-    plugin:
-      env:
-        - name: HELM_RELEASE_NAME
-          value: demo-api
+    # ArgoCD auto-detects Helm charts (it sees Chart.yaml) and renders
+    # them natively. No plugin needed. The valueFiles below point at our
+    # own values.yaml inside the chart folder.
+    helm:
+      valueFiles:
+        - values.yaml
   destination:
     server: https://kubernetes.default.svc
-    # The chart targets namespaces inside the manifests, so this is
-    # just the default. The real target is `sentinel` (see templates).
+    # The chart targets the `sentinel` namespace inside the manifests,
+    # so this is just a default. Real target is `sentinel`.
     namespace: sentinel
   syncPolicy:
     automated:
