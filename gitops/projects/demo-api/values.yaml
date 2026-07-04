@@ -9,10 +9,8 @@
 replicaCount: 1
 
 image:
-  # Set in T0.13 once the Dockerfile exists and CI pushes to GHCR.
-  # For now this placeholder lets ArgoCD render the chart without errors.
   repository: ghcr.io/yessine15/sentinel-demo-api
-  tag: "0.1.0"
+  tag: "v0.1.1"
   pullPolicy: IfNotPresent
 
 # Resources for local dev — keep tiny.

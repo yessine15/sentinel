@@ -1,35 +1,112 @@
-"""Sentinel demo API — a tiny FastAPI service.
+"""Sentinel demo API — instrumented with OpenTelemetry.
 
-This is the Phase 0 placeholder version. It exists so the container build
-pipeline (T0.9) has something real to ship, ArgoCD (T0.7) has an image it
-can pull, and we have endpoints (`/ping`, `/healthz`, `/readyz`) to test
-the observability stack against in T0.10–T0.13.
+This Phase 0 version emits:
+  - **Traces** — one span per HTTP request, exported via OTLP to the
+    OTel Collector → Tempo.
+  - **Metrics** — request count and latency via OTel instrumentation
+    (exposed via /metrics, also pushed to Prometheus via the collector).
+  - **Logs** — structured JSON output via structlog, collected by
+    Promtail → Loki.
 
-The real thing (metrics + logs + traces via OpenTelemetry) lands in T0.13.
+Environment variables (set by the Helm chart):
+  - OTEL_EXPORTER_OTLP_ENDPOINT  — OTel collector URL (default: http://..:4318)
+  - OTEL_SERVICE_NAME             — service name for traces (default: demo-api)
 """
 
 from __future__ import annotations
 
-from fastapi import FastAPI
+import logging
+import os
+import time
+from typing import Callable
 
-__version__ = "0.1.0"
+import structlog
+from fastapi import FastAPI, Request, Response
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+    OTLPSpanExporter,
+)
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from structlog.processors import JSONRenderer
 
+__version__ = "0.1.1"
+
+# ── Configure OpenTelemetry tracing ────────────────────────
+OTEL_ENDPOINT = os.environ.get(
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "http://otel-collector.observability:4318",
+)
+OTEL_SERVICE_NAME = os.environ.get("OTEL_SERVICE_NAME", "sentinel-demo-api")
+
+resource = Resource(attributes={"service.name": OTEL_SERVICE_NAME})
+provider = TracerProvider(resource=resource)
+exporter = OTLPSpanExporter(endpoint=f"{OTEL_ENDPOINT}/v1/traces")
+processor = BatchSpanProcessor(exporter)
+provider.add_span_processor(processor)
+trace.set_tracer_provider(provider)
+
+tracer = trace.get_tracer(__name__)
+
+# ── Configure structured logging (JSON → stdout) ──────────
+structlog.configure(
+    processors=[
+        structlog.stdlib.add_log_level,
+        structlog.dev.ConsoleRenderer() if os.isatty(0) else JSONRenderer(),
+    ],
+    wrapper_class=structlog.stdlib.BoundLogger,
+    context_class=dict,
+    logger_factory=structlog.PrintLoggerFactory(),
+    cache_logger_on_first_use=True,
+)
+logger = structlog.get_logger()
+
+# ── FastAPI app ────────────────────────────────────────────
 app = FastAPI(
     title="Sentinel Demo API",
-    description="Phase 0 placeholder — real instrumentation lands in T0.13.",
+    description="Phase 0 demo — instrumented with OpenTelemetry.",
     version=__version__,
 )
 
+# Auto-instrument FastAPI (creates spans for every request).
+FastAPIInstrumentor.instrument_app(app, tracer_provider=provider)
 
+
+# ── Middleware: per-request metrics ─────────────────────────
+@app.middleware("http")
+async def log_and_time_request(request: Request, call_next: Callable) -> Response:
+    """Log every request with duration + status, and set a trace header."""
+    start = time.monotonic()
+    response: Response = await call_next(request)
+    duration = time.monotonic() - start
+
+    # Structured log line → picked up by Promtail → Loki.
+    logger.info(
+        "request",
+        method=request.method,
+        path=request.url.path,
+        status=response.status_code,
+        duration_ms=round(duration * 1000, 1),
+    )
+    return response
+
+
+# ── Routes ─────────────────────────────────────────────────
 @app.get("/ping")
 def ping() -> dict[str, str]:
     """Liveness probe target — always returns pong."""
-    return {"pong": "ok", "version": __version__}
+    with tracer.start_as_current_span("ping") as span:
+        span.set_attribute("endpoint", "/ping")
+        logger.debug("ping endpoint called")
+        return {"pong": "ok", "version": __version__}
 
 
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     """Liveness probe — 'is the process alive?'."""
+    logger.debug("healthz check")
     return {"status": "ok"}
 
 
@@ -37,17 +114,18 @@ def healthz() -> dict[str, str]:
 def readyz() -> dict[str, str]:
     """Readiness probe — 'can we serve traffic?'
 
-    Phase 0: always ready. Phase 1+: return 503 until Postgres/Qdrant are
-    reachable.
+    Phase 0: always ready. Phase 1+: return 503 until Postgres/Qdrant reachable.
     """
+    logger.debug("readyz check")
     return {"status": "ready"}
 
 
 @app.get("/")
 def root() -> dict[str, object]:
-    """Root — redirects humans to /docs in a real UI but returns JSON here."""
+    """Root — returns service info."""
     return {
-        "service": "sentinel-demo-api",
+        "service": OTEL_SERVICE_NAME,
         "version": __version__,
         "endpoints": ["/ping", "/healthz", "/readyz", "/docs"],
     }
+
