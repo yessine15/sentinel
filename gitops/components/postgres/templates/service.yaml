@@ -1,0 +1,25 @@
+# =============================================================
+# Service: ClusterIP on port 5432
+#
+# Reachable inside the cluster as
+#   postgres.postgres.svc.cluster.local:5432
+# No Ingress — Postgres is a binary TCP protocol; use port-forward
+# for host access:
+#   kubectl -n postgres port-forward svc/postgres 5432:5432
+# =============================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: sentinel
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: postgres
+  ports:
+    - name: tcp-postgres
+      port: 5432
+      targetPort: 5432
+      protocol: TCP

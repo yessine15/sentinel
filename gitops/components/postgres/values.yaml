@@ -1,0 +1,78 @@
+# =============================================================
+# Postgres + pgvector values for Sentinel (local kind)
+#
+# Single-replica Postgres 16 with the pgvector extension enabled
+# in the `sentinel` database. Uses the pgvector/pgvector:pg16
+# image which ships with a pre-compiled `vector` extension.
+#
+# No Ingress — Postgres speaks a binary TCP protocol, not HTTP,
+# so we expose it as a ClusterIP Service only. Use port-forward
+# for local psql access:
+#   kubectl -n postgres port-forward svc/postgres 5432:5432
+# =============================================================
+
+# --- Image (pgvector official, Postgres 16 + vector ext) --------
+image:
+  repository: pgvector/pgvector
+  tag: "pg16"
+  pullPolicy: IfNotPresent
+
+# --- Single replica (dev) ---------------------------------------
+replicaCount: 1
+
+# --- Credentials (local dev only — Phase 4 moves to Vault) ------
+auth:
+  postgresPassword: "sentinel"
+  database: "sentinel"
+  username: "sentinel"
+  password: "sentinel"
+
+# --- Persistence ------------------------------------------------
+persistence:
+  enabled: true
+  size: 2Gi
+  storageClassName: standard
+  accessModes:
+    - ReadWriteOnce
+
+# --- Resources (tuned for dev) ---------------------------------
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# --- Probes -----------------------------------------------------
+livenessProbe:
+  enabled: true
+  initialDelaySeconds: 30
+  periodSeconds: 10
+readinessProbe:
+  enabled: true
+  initialDelaySeconds: 10
+  periodSeconds: 10
+
+# --- ServiceMonitor (scraped by Prometheus) ---------------------
+serviceMonitor:
+  enabled: false   # toggle on once postgres-exporter is added
+
+# --- Initdb scripts (run on first boot only) --------------------
+# pgvector ships with the `vector` extension pre-compiled; we only
+# need `CREATE EXTENSION` to register it in the target database.
+initdbScripts:
+  enable-vector.sql: |
+    -- Enable pgvector in the application database.
+    -- \dx in psql will list `vector` once this has run.
+    CREATE EXTENSION IF NOT EXISTS vector;
+
+# --- Pod security ----------------------------------------------
+podSecurityContext:
+  fsGroup: 999   # postgres group inside the image
+
+containerSecurityContext:
+  runAsUser: 999
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false   # Postgres writes to PGDATA

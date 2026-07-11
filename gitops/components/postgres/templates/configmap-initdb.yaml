@@ -1,0 +1,20 @@
+# =============================================================
+# ConfigMap: initdb scripts
+#
+# Mounted at /docker-entrypoint-initdb.d/ — the pgvector/pgvector
+# image (derived from the official Postgres image) runs every
+# *.sql / *.sh file in this directory once, when PGDATA is empty
+# on first boot.
+# ============================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-initdb
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: sentinel
+data:
+{{- range $filename, $content := .Values.initdbScripts }}
+  {{ $filename }}: |
+{{ $content | indent 4 }}
+{{- end }}

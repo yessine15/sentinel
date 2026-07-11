@@ -1,0 +1,37 @@
+# =============================================================
+# ArgoCD Application: postgres
+#
+# Deploys PostgreSQL 16 with the pgvector extension into the
+# `postgres` namespace. The chart wrapper lives in
+# gitops/components/postgres/ and uses the pgvector/pgvector:pg16
+# image which ships with the `vector` extension pre-compiled.
+#
+# Discovered by the root App-of-Apps (gitops/argocd/apps/root.yaml)
+# because this file lives under gitops/argocd/apps/.
+# =============================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: postgres
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/yessine15/sentinel.git
+    targetRevision: main
+    path: gitops/components/postgres
+    helm:
+      valueFiles:
+        - values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: postgres
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
