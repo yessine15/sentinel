@@ -54,6 +54,7 @@ from sentinel_rag.embed import get_embedder
 from sentinel_rag.sources.code import CodeConnector
 from sentinel_rag.sources.markdown import MarkdownConnector
 from sentinel_rag.sources.runbook import RunbookConnector
+from sentinel_rag.sparse import token_hash
 
 if TYPE_CHECKING:
     from sentinel_rag.chunkers.base import Chunk, Chunker
@@ -153,6 +154,10 @@ class SparseEncoder:
     def encode(self, text: str) -> dict[str, list[float]]:
         """Encode *text* as a Qdrant-compatible sparse vector.
 
+        Uses deterministic hash-based indices (CRC32 → 31-bit) so that
+        the retriever (T1.7) can produce matching sparse query vectors
+        without access to the ingest-time vocabulary.
+
         Returns:
             Dict with ``"indices"`` (``list[int]``) and ``"values"``
             (``list[float]``) keys, suitable for the Qdrant REST API.
@@ -166,13 +171,13 @@ class SparseEncoder:
         values: list[float] = []
 
         for token, count in tf.items():
-            idx = self._vocab.get(token)
-            if idx is None:
+            # Skip tokens not seen in the training corpus (no IDF weight).
+            if token not in self._vocab:
                 continue
             # Smooth IDF: log((N+1) / (df+1)) + 1  (prevents zero and negative).
             tf_norm = count / len(tokens)
             idf = log((self._N + 1) / (self._df[token] + 1)) + 1.0
-            indices.append(idx)
+            indices.append(token_hash(token))
             values.append(tf_norm * idf)
 
         return {"indices": indices, "values": values}

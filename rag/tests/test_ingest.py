@@ -137,8 +137,9 @@ class TestSparseEncoder:
         result = enc.encode("hello unknown")
         # "unknown" is OOV — only "hello" should appear
         assert len(result["indices"]) == 1
-        idx = result["indices"][0]
-        assert enc._vocab["hello"] == idx
+        # Index is hash-based (crc32), just verify it's a positive int
+        assert isinstance(result["indices"][0], int)
+        assert result["indices"][0] >= 0
 
     def test_tokenize_lowercases_and_splits(self) -> None:
         tokens = SparseEncoder._tokenize("Hello, World! 123 foo-bar_baz")
@@ -150,14 +151,12 @@ class TestSparseEncoder:
         # "common" appears in all 3 docs, "rare" in 2 of 3 — rare gets higher IDF
         common_result = enc.encode("common")
         rare_result = enc.encode("rare")
-        common_idx = enc._vocab["common"]
-        rare_idx = enc._vocab["rare"]
 
-        common_val = dict(zip(common_result["indices"], common_result["values"], strict=False))[
-            common_idx
-        ]
-        rare_val = dict(zip(rare_result["indices"], rare_result["values"], strict=False))[rare_idx]
-        assert rare_val > common_val
+        # Both should have exactly one entry since each text has one unique token
+        assert len(common_result["indices"]) == 1
+        assert len(rare_result["indices"]) == 1
+        # Rare token should have higher IDF → higher value
+        assert rare_result["values"][0] > common_result["values"][0]
 
 
 # ---------------------------------------------------------------------------
