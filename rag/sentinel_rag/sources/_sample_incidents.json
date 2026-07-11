@@ -1,0 +1,29 @@
+[
+  {
+    "id": 1,
+    "title": "demo-api OOMKilled",
+    "summary": "The demo-api pod in the sentinel namespace was OOMKilled three times in 10 minutes. Memory limit was set to 64Mi; the uvicorn worker overshot it under load. Resolution: raised the memory limit to 256Mi and redeployed via ArgoCD. Root cause: the default worker count of 4 multiplied the per-worker RSS beyond the pod limit.",
+    "severity": "warning",
+    "service": "demo-api",
+    "status": "resolved",
+    "created_at": "2026-07-10T14:03:00Z"
+  },
+  {
+    "id": 2,
+    "title": "CrashLoopBackOff on qdrant",
+    "summary": "Qdrant replica entered CrashLoopBackOff after a node reboot. The PVC reattached to a different worker node but the snapshot directory was stale. Resolution: deleted the stale snapshot lock file and restarted the pod. Root cause: kind's local-path provisioner does not guarantee PVC stickiness across node restarts.",
+    "severity": "critical",
+    "service": "qdrant",
+    "status": "resolved",
+    "created_at": "2026-07-10T18:21:00Z"
+  },
+  {
+    "id": 3,
+    "title": "Prometheus target down: kube-controller-manager",
+    "summary": "The kube-controller-manager target showed as down in Prometheus. This is expected on kind clusters because the control-plane does not expose a scrape-friendly endpoint. No action required; the alert was silenced in Alertmanager.",
+    "severity": "info",
+    "service": "kube-system",
+    "status": "closed",
+    "created_at": "2026-07-11T09:00:00Z"
+  }
+]
