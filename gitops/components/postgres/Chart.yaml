@@ -1,0 +1,22 @@
+# =============================================================
+# Postgres + pgvector — Helm chart for Sentinel
+#
+# Self-contained chart (no upstream dependency) that deploys a
+# single Postgres 16 instance with the pgvector extension
+# pre-compiled in the pgvector/pgvector:pg16 image.
+#
+# The image is published by the pgvector project and bundles the
+# `vector` extension runnable via `CREATE EXTENSION vector;`.
+# We run an initdb script (initdbScripts) so the extension is
+# enabled in the default `sentinel` database on first boot.
+#
+# Exposed inside the cluster as postgres.postgres.svc:5432.
+# No Ingress by default (psql is a TCP protocol, not HTTP) —
+# use `kubectl port-forward` for local access.
+# =============================================================
+apiVersion: v2
+name: postgres
+description: PostgreSQL 16 with pgvector extension for Sentinel RAG
+type: application
+version: 0.1.0
+appVersion: "pg16"
