@@ -105,6 +105,7 @@ def retrieve(
     client: QdrantClient | None = None,
     top_k: int = 50,
     prefetch_limit: int = 100,
+    reranker: object | None = None,
 ) -> list[RetrievedPoint]:
     """Run a hybrid (dense + sparse) query against the Qdrant collection.
 
@@ -117,10 +118,14 @@ def retrieve(
         top_k: Maximum number of results to return (default 50).
         prefetch_limit: How many candidates to fetch from each prefetch
             before fusion (default 100).
+        reranker: An optional cross-encoder reranker instance (e.g.
+            :class:`~sentinel_rag.reranker.CrossEncoderReranker`).  If
+            provided, the hybrid results are re-ranked and *top_k* is
+            passed as the re-rank target count.
 
     Returns:
         A list of :class:`RetrievedPoint` objects, ranked by RRF score
-        (best first).
+        (best first), or by cross-encoder score if *reranker* is given.
 
     Raises:
         ValueError: If *query* is empty or whitespace-only.
@@ -165,7 +170,7 @@ def retrieve(
         raise RuntimeError(f"Qdrant hybrid query failed: {exc}") from exc
 
     # 4. Map ScoredPoint → RetrievedPoint
-    return [
+    candidates = [
         RetrievedPoint(
             chunk_id=str(p.id),
             text=str(p.payload.get("text", "") if p.payload else ""),
@@ -183,6 +188,12 @@ def retrieve(
         )
         for p in results
     ]
+
+    # 5. Optional cross-encoder rerank
+    if reranker is not None:
+        candidates = reranker.rerank(query, candidates, top_k=top_k)
+
+    return candidates
 
 
 # ---------------------------------------------------------------------------
