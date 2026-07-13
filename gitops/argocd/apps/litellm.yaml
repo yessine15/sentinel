@@ -1,0 +1,36 @@
+# =============================================================
+# ArgoCD Application: litellm
+#
+# Deploys the LiteLLM proxy gateway via the self-contained Helm
+# chart at gitops/components/litellm/.  Lives under the `litellm`
+# namespace.
+#
+# LiteLLM proxies requests to Ollama (local host) and optionally
+# to OpenAI, exposing an OpenAI-compatible /v1/chat/completions
+# endpoint at http://llm.local.
+# =============================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: litellm
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/yessine15/sentinel.git
+    targetRevision: main
+    path: gitops/components/litellm
+    helm:
+      valueFiles:
+        - values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: litellm
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

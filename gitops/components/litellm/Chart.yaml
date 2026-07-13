@@ -1,0 +1,23 @@
+# =============================================================
+# LiteLLM — Helm chart for Sentinel
+#
+# Self-contained chart (no upstream dependency) that deploys a
+# single LiteLLM proxy instance.
+#
+# LiteLLM provides an OpenAI-compatible /v1/chat/completions
+# endpoint that proxies requests to the configured model backends
+# (Ollama on the host, optionally OpenAI cloud).
+#
+# Uses hostNetwork on kind so the pod can reach the host's Ollama
+# at localhost:11434.  For cloud/remote deployments, switch
+# hostNetwork to false and set ollamaHost to the actual address.
+#
+# Exposed inside the cluster as litellm.litellm.svc:4000 and
+# externally at http://llm.local via ingress-nginx.
+# =============================================================
+apiVersion: v2
+name: litellm
+description: LiteLLM proxy gateway for Sentinel RAG and Agents
+type: application
+version: 0.1.0
+appVersion: "main-stable"

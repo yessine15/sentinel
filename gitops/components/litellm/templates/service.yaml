@@ -1,0 +1,28 @@
+# =============================================================
+# Service: ClusterIP on the LiteLLM proxy port
+#
+# Reachable inside the cluster as
+#   litellm.litellm.svc.cluster.local:4000
+# or at the short name
+#   litellm.litellm.svc:4000
+#
+# The Ingress at llm.local routes external traffic to this
+# Service.
+# =============================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: litellm
+  labels:
+    app.kubernetes.io/name: litellm
+    app.kubernetes.io/part-of: sentinel
+spec:
+  type: ClusterIP
+  # No selector — the proxy runs on the host, not as a pod.
+  # Traffic is routed to the host via the Endpoints resource
+  # (see endpoints.yaml).
+  ports:
+    - name: http
+      port: 4000
+      targetPort: {{ .Values.proxyPort }}
+      protocol: TCP

@@ -1,0 +1,60 @@
+# =============================================================
+# LiteLLM / LLM Gateway values for Sentinel (local kind)
+#
+# Deploys a lightweight Python proxy that exposes
+# OpenAI-compatible /v1/chat/completions and /v1/embeddings
+# by forwarding requests to Ollama on the host.
+#
+# Uses hostNetwork on kind so the pod can reach the host's
+# Ollama at localhost:11434.  The proxy is ~100KB (stdlib only)
+# and starts in <1s on python:3.12-alpine (~50MB image).
+#
+# Replace with full LiteLLM proxy for production features
+# (multi-model routing, rate limiting, key management, etc.).
+#
+# Exposed at http://llm.local via ingress-nginx.
+# =============================================================
+
+# --- Single replica (dev) ------------------------------------
+replicaCount: 1
+
+# --- Networking -----------------------------------------------
+# IP of the host machine from inside kind containers.
+# The proxy (started by install-litellm.sh) listens on this
+# host on port proxyPort.  The Docker bridge gateway is the
+# standard way for kind nodes to reach the host.
+hostProxyIP: "172.18.0.1"
+
+# Port the proxy listens on.
+proxyPort: 4000
+
+# Host where Ollama is reachable (from the proxy process).
+ollamaHost: "http://localhost:11434"
+
+# --- Ingress --------------------------------------------------
+ingress:
+  enabled: true
+  host: "llm.local"
+  className: "nginx"
+
+# --- Resources (lightweight proxy — minimal) ------------------
+resources:
+  requests:
+    cpu: 10m
+    memory: 16Mi
+  limits:
+    cpu: 200m
+    memory: 64Mi
+
+# --- Probes ---------------------------------------------------
+livenessProbe:
+  enabled: true
+  path: "/health/liveliness"
+  periodSeconds: 15
+  timeoutSeconds: 5
+
+readinessProbe:
+  enabled: true
+  path: "/health/readiness"
+  periodSeconds: 10
+  timeoutSeconds: 5
