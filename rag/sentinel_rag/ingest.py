@@ -203,12 +203,15 @@ def _build_points(
     sparse_encoder: SparseEncoder,
 ) -> list[PointStruct]:
     """Assemble Qdrant :class:`PointStruct` objects from chunks and embeddings."""
+    import uuid
+
     points: list[PointStruct] = []
     for chunk, vec in zip(chunks, vectors, strict=True):
         sparse = sparse_encoder.encode(chunk.text)
+        point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, chunk.chunk_id))
         points.append(
             PointStruct(
-                id=chunk.chunk_id,
+                id=point_id,
                 vector={
                     DENSE_VECTOR_NAME: vec,
                     SPARSE_VECTOR_NAME: sparse,
@@ -220,6 +223,7 @@ def _build_points(
                     "line_end": chunk.line_end,
                     "source_type": chunk.source_type,
                     "parent_doc_id": chunk.parent_doc_id,
+                    "chunk_id": chunk.chunk_id,
                     **chunk.metadata,
                 },
             )

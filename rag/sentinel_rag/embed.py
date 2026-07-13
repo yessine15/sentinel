@@ -90,6 +90,9 @@ class OllamaEmbedder(Embedder):
 
     Uses the BGE-M3 model (1024-dim) by default.  Model must be pulled
     beforehand: ``ollama pull bge-m3``.
+
+    The vector dimension is detected lazily from the first embedding call
+    and cached for subsequent lookups.
     """
 
     def __init__(
@@ -101,11 +104,20 @@ class OllamaEmbedder(Embedder):
         self.base_url = (base_url or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")).rstrip(
             "/"
         )
+        self._dimension: int | None = None
 
     @property
     def dimension(self) -> int:
-        # BGE-M3 always outputs 1024.
-        return 1024
+        if self._dimension is not None:
+            return self._dimension
+        # Detect dimension from a lightweight test embedding.
+        # Falls back to 1024 (BGE-M3 default) if detection fails.
+        try:
+            vec = self.embed("dimension probe")
+            self._dimension = len(vec)
+        except Exception:
+            self._dimension = 1024
+        return self._dimension
 
     def embed(self, text: str) -> list[float]:
         self._validate_text(text)

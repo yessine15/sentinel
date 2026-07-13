@@ -15,14 +15,16 @@ Environment variables (set by the Helm chart):
 
 from __future__ import annotations
 
-import logging
 import os
 import time
-from typing import Callable
+from typing import TYPE_CHECKING
 
 import structlog
 from fastapi import FastAPI, Request, Response
 from opentelemetry import trace
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
     OTLPSpanExporter,
 )
@@ -94,6 +96,11 @@ async def log_and_time_request(request: Request, call_next: Callable) -> Respons
 
 
 # ── Routes ─────────────────────────────────────────────────
+from sentinel_api.routes.ask import router as ask_router  # noqa: E402
+
+app.include_router(ask_router)
+
+
 @app.get("/ping")
 def ping() -> dict[str, str]:
     """Liveness probe target — always returns pong."""

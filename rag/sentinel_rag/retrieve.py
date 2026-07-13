@@ -172,7 +172,7 @@ def retrieve(
     # 4. Map ScoredPoint → RetrievedPoint
     candidates = [
         RetrievedPoint(
-            chunk_id=str(p.id),
+            chunk_id=str(p.payload.get("chunk_id", p.id) if p.payload else p.id),
             text=str(p.payload.get("text", "") if p.payload else ""),
             path=str(p.payload.get("path", "") if p.payload else ""),
             line_start=int(p.payload.get("line_start", 0) if p.payload else 0),
