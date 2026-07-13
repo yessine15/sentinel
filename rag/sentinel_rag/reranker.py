@@ -128,13 +128,22 @@ class CrossEncoderReranker:
         except Exception as exc:
             raise RuntimeError(f"Cross-encoder reranking failed: {exc}") from exc
 
-        # Normalise to a single float if predict returns nested lists
-        if scores and isinstance(scores[0], list):
-            scores = [float(s[0]) if s else 0.0 for s in scores]  # type: ignore[index]
+        # Normalise scores to a flat list of floats.
+        # predict() may return a 2D array (n,1), 1D array (n,), or list.
+        flat_scores: list[float] = []
+        for s in scores:
+            try:
+                # If s is a list/array, extract first element.
+                if isinstance(s, (list, tuple)) or (hasattr(s, "__len__") and hasattr(s, "__getitem__") and not isinstance(s, (str, bytes))):
+                    flat_scores.append(float(s[0]) if len(s) > 0 else 0.0)  # type: ignore[index]
+                else:
+                    flat_scores.append(float(s))  # type: ignore[arg-type]
+            except (TypeError, ValueError, IndexError):
+                flat_scores.append(0.0)
 
         # Pair, sort descending by score, and trim to top_k
         ranked = sorted(
-            zip(candidates, scores, strict=True), key=lambda pair: pair[1], reverse=True
+            zip(candidates, flat_scores, strict=True), key=lambda pair: pair[1], reverse=True
         )
 
         return [

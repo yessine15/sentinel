@@ -178,7 +178,9 @@ class TestBuildPoints:
         assert len(points) == 1
         p = points[0]
         assert isinstance(p, PointStruct)
-        assert p.id == "code:test.py:1-2"
+        # Chunk IDs are now UUIDs (derived from the original chunk_id).
+        import uuid
+        assert p.id == str(uuid.uuid5(uuid.NAMESPACE_DNS, "code:test.py:1-2"))
         assert DENSE_VECTOR_NAME in p.vector  # type: ignore[index]
         assert SPARSE_VECTOR_NAME in p.vector  # type: ignore[index]
         assert p.vector[DENSE_VECTOR_NAME] == [0.1] * 8  # type: ignore[index]
@@ -188,6 +190,8 @@ class TestBuildPoints:
         assert p.payload["language"] == "python"  # type: ignore[index]
 
     def test_multiple_chunks(self) -> None:
+        import uuid
+
         chunks = [
             _fake_chunk("code:a.py:1-2", "def a():"),
             _fake_chunk("code:b.py:1-2", "def b():"),
@@ -199,8 +203,8 @@ class TestBuildPoints:
         points = _build_points(chunks, vectors, enc)
 
         assert len(points) == 2
-        assert points[0].id == "code:a.py:1-2"
-        assert points[1].id == "code:b.py:1-2"
+        assert points[0].id == str(uuid.uuid5(uuid.NAMESPACE_DNS, "code:a.py:1-2"))
+        assert points[1].id == str(uuid.uuid5(uuid.NAMESPACE_DNS, "code:b.py:1-2"))
 
     def test_sparse_vector_present(self) -> None:
         chunks = [_fake_chunk(text="hello world")]
