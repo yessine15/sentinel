@@ -1,0 +1,27 @@
+# =============================================================
+# Endpoints: manual routing to the host proxy
+#
+# Since the LLM gateway runs as a host process (not a pod),
+# we create a static Endpoints object that points to the
+# Docker bridge gateway IP, where the host proxy listens.
+#
+# The host proxy is started by scripts/install-litellm.sh
+# and listens on 0.0.0.0:4000.
+#
+# For cloud/remote deployments, replace this with a real
+# Deployment + Pod, or configure an ExternalName Service.
+# =============================================================
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: litellm
+  labels:
+    app.kubernetes.io/name: litellm
+    app.kubernetes.io/part-of: sentinel
+subsets:
+  - addresses:
+      - ip: {{ .Values.hostProxyIP }}
+    ports:
+      - name: http
+        port: {{ .Values.proxyPort }}
+        protocol: TCP
