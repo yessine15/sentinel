@@ -8,6 +8,7 @@ import pytest
 
 from sentinel_rag.embed import (
     Embedder,
+    LocalEmbedder,
     OllamaEmbedder,
     OpenAIEmbedder,
     get_embedder,
@@ -286,6 +287,13 @@ def test_get_embedder_openai(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     embedder = get_embedder()
     assert isinstance(embedder, OpenAIEmbedder)
+
+
+def test_get_embedder_local(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EMBED_PROVIDER", "local")
+    embedder = get_embedder()
+    assert isinstance(embedder, LocalEmbedder)
+    assert embedder.dimension == 384  # all-MiniLM-L6-v2
 
 
 def test_get_embedder_unknown_provider_raises(monkeypatch: pytest.MonkeyPatch) -> None:
