@@ -24,7 +24,8 @@ Environment variables
 ====================  =======  ==============================================
 Variable              Default  Description
 ====================  =======  ==============================================
-``EMBED_PROVIDER``    ollama   ``"ollama"`` or ``"openai"``.
+``EMBED_PROVIDER``    ollama   ``"ollama"``, ``"openai"``, or ``"local"``
+                               (``sentence-transformers`` in-process).
 ``OLLAMA_BASE_URL``   http://  Base URL for the Ollama server.
                       localhost:
                       11434
@@ -36,6 +37,9 @@ Variable              Default  Description
 ``OPENAI_MODEL``      text-    Model name for OpenAI embeddings.
                       embeddin
                       g-3-small
+``LOCAL_EMBED_MODEL`` all-     ``sentence-transformers`` model name for the
+                      MiniLM-  ``"local"`` provider.
+                      L6-v2
 ====================  =======  ==============================================
 """
 
@@ -256,12 +260,82 @@ class OpenAIEmbedder(Embedder):
 
 
 # --------------------------------------------------------------------------- #
+# Local sentence-transformers provider (CI-friendly, no external services)
+# --------------------------------------------------------------------------- #
+
+_LOCAL_MODEL = os.getenv("LOCAL_EMBED_MODEL", "all-MiniLM-L6-v2")
+
+
+class LocalEmbedder(Embedder):
+    """Embedder that uses ``sentence-transformers`` for local inference.
+
+    No external service (Ollama, OpenAI) needed — the model runs entirely
+    in-process.  Designed for CI environments where you want a fast,
+    deterministic embedding without network calls.
+
+    Uses ``all-MiniLM-L6-v2`` (384-dim, ~80 MB) by default.  Override via
+    the ``LOCAL_EMBED_MODEL`` env var.
+    """
+
+    _MODEL_DIMS: ClassVar[dict[str, int]] = {
+        "all-MiniLM-L6-v2": 384,
+        "all-mpnet-base-v2": 768,
+        "BAAI/bge-small-en-v1.5": 384,
+    }
+
+    def __init__(
+        self,
+        model_name: str | None = None,
+    ) -> None:
+        self.model_name = model_name or _LOCAL_MODEL
+        self._model: object | None = None
+
+    @property
+    def dimension(self) -> int:
+        return self._MODEL_DIMS.get(self.model_name, 384)
+
+    @property
+    def model(self) -> object:
+        """Lazily-loaded ``SentenceTransformer`` instance."""
+        if self._model is None:
+            from sentence_transformers import SentenceTransformer
+
+            self._model = SentenceTransformer(self.model_name)
+        return self._model
+
+    def embed(self, text: str) -> list[float]:
+        self._validate_text(text)
+        try:
+            vec = self.model.encode(text, normalize_embeddings=True)  # type: ignore[union-attr]
+            return list(vec)  # type: ignore[arg-type]
+        except Exception as exc:
+            raise RuntimeError(f"Local embed failed: {exc}") from exc
+
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        for t in texts:
+            self._validate_text(t)
+        try:
+            vecs = self.model.encode(texts, normalize_embeddings=True)  # type: ignore[union-attr]
+            return [list(v) for v in vecs]  # type: ignore[arg-type]
+        except Exception as exc:
+            raise RuntimeError(f"Local batch embed failed: {exc}") from exc
+
+    @staticmethod
+    def _validate_text(text: str) -> None:
+        if not text or not text.strip():
+            raise ValueError("text must be non-empty")
+
+
+# --------------------------------------------------------------------------- #
 # Factory
 # --------------------------------------------------------------------------- #
 
 
 def get_embedder() -> Embedder:
     """Return an :class:`Embedder` based on the ``EMBED_PROVIDER`` env var.
+
+    Supports ``"ollama"`` (default), ``"openai"``, and ``"local"``
+    (sentence-transformers, CI-friendly).
 
     Raises:
         ValueError: If ``EMBED_PROVIDER`` is set to an unknown value.
@@ -271,7 +345,11 @@ def get_embedder() -> Embedder:
         return OllamaEmbedder()
     if provider == "openai":
         return OpenAIEmbedder()
-    raise ValueError(f"Unknown EMBED_PROVIDER: {provider!r}. Expected 'ollama' or 'openai'.")
+    if provider == "local":
+        return LocalEmbedder()
+    raise ValueError(
+        f"Unknown EMBED_PROVIDER: {provider!r}. Expected 'ollama', 'openai', or 'local'."
+    )
 
 
 # --------------------------------------------------------------------------- #
