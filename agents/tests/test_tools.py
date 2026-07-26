@@ -27,11 +27,11 @@ from sentinel_agents.tools.base import (
 # Registry
 # ════════════════════════════════════════════════════════════
 class TestRegistry:
-    """The tool registry discovers all four allow-listed tools."""
+    """The tool registry discovers all five allow-listed tools."""
 
-    def test_get_all_tools_returns_four_tools(self):
+    def test_get_all_tools_returns_five_tools(self):
         tools = get_all_tools()
-        assert len(tools) == 4
+        assert len(tools) == 5  # kubectl_get, describe, promql, logql, rag_search
 
     def test_get_tool_names_is_sorted(self):
         names = get_tool_names()
@@ -40,6 +40,7 @@ class TestRegistry:
         assert "kubectl_describe" in names
         assert "promql_query" in names
         assert "logql_query" in names
+        assert "rag_search" in names
 
     def test_every_tool_has_name_and_docstring(self):
         for t in get_all_tools():
@@ -287,6 +288,36 @@ class TestToolSmoke:
         })
         assert "Would query Loki" in result
         assert "BLOCKED" not in result
+
+
+# ════════════════════════════════════════════════════════════
+# rag_search — KB retrieval tool
+# ════════════════════════════════════════════════════════════
+class TestRagSearch:
+    """rag_search handles errors gracefully."""
+    # NOTE: Integration tests against a live Qdrant are in
+    #       agents/tests/test_live_tools.py — these only test that
+    #       the tool is registered and handles error paths safely.
+
+    def test_empty_query_returns_error(self):
+        from sentinel_agents.tools.rag_search import rag_search
+        result = rag_search.invoke({"query": ""})
+        assert "non-empty" in result.lower() or "❌" in result
+
+    def test_whitespace_query_returns_error(self):
+        from sentinel_agents.tools.rag_search import rag_search
+        result = rag_search.invoke({"query": "   "})
+        assert "non-empty" in result.lower() or "❌" in result
+
+    def test_rag_search_is_registered(self):
+        """rag_search appears in the tool registry."""
+        from sentinel_agents.tools import get_tool_names
+        assert "rag_search" in get_tool_names()
+
+    def test_rag_search_has_category(self):
+        """rag_search is tagged with category 'rag'."""
+        from sentinel_agents.tools.rag_search import rag_search
+        assert getattr(rag_search, "__sentinel_category__", None) == "rag"
 
 
 # ════════════════════════════════════════════════════════════

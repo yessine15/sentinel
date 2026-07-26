@@ -13,6 +13,7 @@ from sentinel_agents.tools import kubectl_get  # noqa: F401
 from sentinel_agents.tools import kubectl_describe  # noqa: F401
 from sentinel_agents.tools import promql_query  # noqa: F401
 from sentinel_agents.tools import logql_query  # noqa: F401
+from sentinel_agents.tools import rag_search  # noqa: F401
 
 ALLOWED_TOOLS = get_all_tools()
 """The complete list of registered, allow-listed tools."""
