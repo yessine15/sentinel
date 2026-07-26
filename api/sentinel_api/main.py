@@ -100,6 +100,10 @@ from sentinel_api.routes.ask import router as ask_router  # noqa: E402
 
 app.include_router(ask_router)
 
+from sentinel_api.routes.chat import router as chat_router  # noqa: E402
+
+app.include_router(chat_router)
+
 
 @app.get("/ping")
 def ping() -> dict[str, str]:
