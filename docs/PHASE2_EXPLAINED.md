@@ -88,7 +88,6 @@ needs to:
 ```mermaid
 flowchart TB
     subgraph FRONTEND["🖥️ FRONTEND — Next.js 15 Chat UI"]
-        direction TB
         F1["WebSocket client hook<br/>auto-reconnect"]
         F2["Message list with<br/>streaming tokens"]
         F3["Clickable source chips<br/>with hover popovers"]
@@ -96,27 +95,25 @@ flowchart TB
     end
 
     subgraph API["⚡ API — FastAPI Server"]
-        direction TB
         A1["GET /ping, /healthz, /readyz<br/>health endpoints"]
         A2["POST /ask<br/>RAG-powered Q&A with citations"]
         A3["WS /chat/ws<br/>streaming agent chat"]
     end
 
     subgraph AGENT["🧠 AGENT — LangGraph State Machine"]
-        direction TB
         G1["sre_agent node<br/>LLM with bound tools"]
         G2["tools node<br/>ToolNode executes tools"]
-        G3["Router<br/>should_continue()"]
-        G4["State<br/>messages + tool_calls + scratchpad"]
+        G3["Router<br/>should_continue"]
+        G4["State<br/>messages, tool_calls, scratchpad"]
+        G5["Agent responds"]
 
-        G1 -->|"has tool_calls?"| G3
+        G1 -->|"has tool_calls ?"| G3
         G3 -->|"YES"| G2
-        G3 -->|"NO → END"| G5["Agent responds"]
+        G3 -->|"NO then END"| G5
         G2 -->|"tool results"| G1
     end
 
     subgraph TOOLS["🔧 TOOLS — 5 Allow-Listed Tools"]
-        direction LR
         T1["kubectl_get<br/>get pods/deployments/nodes..."]
         T2["kubectl_describe<br/>describe any resource"]
         T3["promql_query<br/>Prometheus metrics"]
@@ -125,7 +122,6 @@ flowchart TB
     end
 
     subgraph CLUSTER["☸️ KUBERNETES CLUSTER"]
-        direction LR
         K1["Pods / Deployments<br/>kubectl"]
         K2["Prometheus<br/>metrics on :9090"]
         K3["Loki<br/>logs on :3100"]
@@ -133,22 +129,15 @@ flowchart TB
     end
 
     subgraph GATEWAY["🌉 LLM Gateway"]
-        GW["proxy.py<br/>OpenAI-compatible HTTP<br/>→ Ollama native API"]
+        GW["proxy.py<br/>OpenAI-compatible HTTP<br/>Ollama native API"]
     end
 
-    FRONTEND -->|"WebSocket (ws://)"| API
-    API -->|".astream()"| AGENT
+    FRONTEND -->|"WebSocket"| API
+    API -->|"astream()"| AGENT
     AGENT -->|"LLM calls"| GATEWAY
     GATEWAY -->|"Ollama"| LLM["🦙 Ollama<br/>gemma4, qwen36"]
     AGENT -->|"tool calls"| TOOLS
     TOOLS -->|"subprocess / HTTP"| CLUSTER
-
-    style FRONTEND fill:#e3f2fd,stroke:#1565c0
-    style API fill:#e8f5e9,stroke:#2e7d32
-    style AGENT fill:#fff3e0,stroke:#e65100
-    style TOOLS fill:#f3e5f5,stroke:#7b1fa2
-    style CLUSTER fill:#ffecb3,stroke:#f57f17
-    style GATEWAY fill:#e8eaf6,stroke:#3949ab
 ```
 
 > 🗣️ **Every arrow in this diagram is real.** The frontend sends a WebSocket message
@@ -195,15 +184,15 @@ flowchart LR
 ```mermaid
 flowchart TD
     START["🏁 START"] --> AGENT["sre_agent node"]
-    AGENT --> ROUTER{"should_continue()"}
-    ROUTER -->|"LLM wants tools"| TOOLS["tools node<br/>(ToolNode)"]
-    ROUTER -->|"LLM is done"| END["🏁 END"]
+    AGENT --> ROUTER{"should_continue ?"}
+    ROUTER -->|"LLM wants tools"| TOOLS["tools node (ToolNode)"]
+    ROUTER -->|"LLM is done"| ENDNODE["🏁 END"]
     TOOLS --> AGENT
 
-    subgraph "Agent state (flows through every node)"
-        S1["messages: list of all messages<br/>(user, AI, tool results)"]
-        S2["tool_calls: pending tool requests<br/>from the LLM"]
-        S3["scratchpad: working memory<br/>(accumulated evidence)"]
+    subgraph STATE["Agent state flows through every node"]
+        S1["messages: list of all messages (user, AI, tool results)"]
+        S2["tool_calls: pending tool requests from the LLM"]
+        S3["scratchpad: working memory (accumulated evidence)"]
     end
 ```
 
@@ -241,9 +230,9 @@ classDiagram
         +scratchpad: dict
     }
 
-    note for AgentState "messages uses add_messages reducer<br/>which automatically appends new messages<br/>so the list always grows, never resets"
-    note for AgentState "tool_calls: extracted from the last<br/>AIMessage's tool_calls field.<br/>Cleared after tool execution."
-    note for AgentState "scratchpad: arbitrary dict for<br/>the agent to store intermediate<br/>findings across tool calls"
+    note for AgentState "messages: uses add_messages reducer which auto-appends new messages so the list always grows, never resets"
+    note for AgentState "tool_calls: extracted from last AIMessage tool_calls field, cleared after tool execution"
+    note for AgentState "scratchpad: arbitrary dict for agent to store intermediate findings across tool calls"
 ```
 
 Where each field means:
@@ -346,16 +335,16 @@ and it can't be bypassed.
 
 ```mermaid
 flowchart LR
-    subgraph "Bypass? NO"
-        H["LLM tries: kubectl_get('delete', 'pods')"]
-        H --> V{validate_kubectl<br/>('delete', 'pods')}
-        V -->|"'delete' not in ALLOWED_VERBS"| BLOCK["❌ BLOCKED<br/>DisallowedVerbError"]
+    subgraph BYPASS["Bypass: NO"]
+        H["LLM tries kubectl_get with verb delete"]
+        H --> V{"validate_kubectl(delete, pods)"}
+        V -->|"delete not in ALLOWED_VERBS"| BLOCK["❌ BLOCKED: DisallowedVerbError"]
     end
 
-    subgraph "Allowed? YES"
-        A["LLM tries: kubectl_get('get', 'pods')"]
-        A --> V2{validate_kubectl<br/>('get', 'pods')}
-        V2 -->|"'get' in ALLOWED_VERBS<br/>'pods' in ALLOWED_RESOURCES"| OK["✅ ALLOWED<br/>proceed to execution"]
+    subgraph ALLOW["Allowed: YES"]
+        A["LLM tries kubectl_get with verb get"]
+        A --> V2{"validate_kubectl(get, pods)"}
+        V2 -->|"get in ALLOWED_VERBS, pods in ALLOWED_RESOURCES"| OK["✅ ALLOWED: proceed to execution"]
     end
 ```
 
@@ -363,29 +352,29 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    subgraph L1["Layer 1: frozenset constants (can't be mutated at runtime)"]
-        V["ALLOWED_KUBECTL_VERBS = frozenset({'get', 'describe'})"]
-        R["ALLOWED_KUBECTL_RESOURCES = frozenset({...30+ types})"]
-        P["ALLOWED_PROMQL_OPERATIONS = frozenset({...9 ops})"]
-        L["ALLOWED_LOGQL_OPERATIONS = frozenset({...6 ops})"]
+    subgraph L1["Layer 1: frozenset constants"]
+        V["ALLOWED_KUBECTL_VERBS = frozenset(get, describe)"]
+        R["ALLOWED_KUBECTL_RESOURCES = frozenset(30+ types)"]
+        P["ALLOWED_PROMQL_OPERATIONS = frozenset(9 ops)"]
+        LL["ALLOWED_LOGQL_OPERATIONS = frozenset(6 ops)"]
     end
 
-    subgraph L2["Layer 2: validation functions (called BEFORE execution)"]
+    subgraph L2["Layer 2: validation functions"]
         VK["validate_kubectl(verb, resource)"]
         VP["validate_promql(operation, query)"]
         VL["validate_logql(operation, query)"]
     end
 
-    subgraph L3["Layer 3: exception hierarchy (distinct error types)"]
-        E1["ToolSecurityError<br/>(base)"]
-        E2["DisallowedVerbError<br/>(e.g. 'delete')"]
-        E3["DisallowedResourceError<br/>(e.g. 'secrets' with 'exec')"]
-        E4["DisallowedQueryError<br/>(e.g. 'delete_series')"]
+    subgraph L3["Layer 3: exception hierarchy"]
+        E1["ToolSecurityError (base)"]
+        E2["DisallowedVerbError (e.g. delete)"]
+        E3["DisallowedResourceError"]
+        E4["DisallowedQueryError (e.g. delete_series)"]
     end
 
-    subgraph L4["Layer 4: tool-level try/except (friendly error to LLM)"]
-        T1["'❌ BLOCKED: delete is NOT allowed'"]
-        T2["'❌ BLOCKED: resource delete_series is forbidden'"]
+    subgraph L4["Layer 4: tool-level try / except"]
+        T1["BLOCKED: delete is NOT allowed"]
+        T2["BLOCKED: resource is forbidden"]
     end
 
     L1 --> L2 --> L3 --> L4
@@ -449,15 +438,15 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    START["Agent decides to call a tool"] --> MODE{"RUN_MODE?"}
+    START["Agent decides to call a tool"] --> MODE{"RUN_MODE"}
 
-    MODE -->|"stub (unit tests)"| STUB["Return command preview:<br/>'[T2.3 STUB] Would run: kubectl get pods'"]
-    MODE -->|"live (production)"| LIVE["Execute for real:"]
+    MODE -->|"stub (unit tests)"| STUB["Return command preview: Would run kubectl"]
+    MODE -->|"live (production)"| LIVE["Execute for real"]
 
-    LIVE --> ROUTE{"Tool category?"}
-    ROUTE -->|"kubernetes"| KUBE["subprocess.run(['kubectl', 'get', 'pods'],<br/>capture_output=True, text=True, timeout=30)"]
-    ROUTE -->|"prometheus/loki"| HTTP["httpx.get('http://localhost:9090/api/v1/query',<br/>params={'query': 'up'})"]
-    ROUTE -->|"rag"| RAG["sentinel_rag.retrieve.retrieve(query, top_k=10)"]
+    LIVE --> ROUTE{"Tool category"}
+    ROUTE -->|"kubernetes"| KUBE["subprocess.run with timeout 30s"]
+    ROUTE -->|"prometheus / loki"| HTTP["httpx.get to HTTP API"]
+    ROUTE -->|"rag"| RAG["sentinel_rag.retrieve.retrieve"]
 ```
 
 ---
@@ -492,29 +481,29 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    IN["kubectl_get(resource='pods', namespace='observability')"] --> VAL["validate_kubectl('get', 'pods')<br/>✅ 'get' is allowed<br/>✅ 'pods' is allowed"]
-    VAL --> CMD["_build_cmd() → ['kubectl', 'get', 'pods', '-n', 'observability', '-o', 'wide']"]
-    CMD --> MODE{"is_live()?"}
-    MODE -->|"YES"| RUN["subprocess.run(cmd, capture_output=True, text=True, timeout=30)"]
-    MODE -->|"NO"| STUB["return '[T2.3 STUB] Would run: ...'"]
-    RUN --> CHECK["returncode == 0?"]
+    IN["kubectl_get(resource pods, namespace observability)"] --> VAL["validate_kubectl: get and pods are allowed"]
+    VAL --> CMD["_build_cmd: constructs kubectl get pods -n observability -o wide"]
+    CMD --> MODE{"is_live"}
+    MODE -->|"YES"| RUN["subprocess.run(cmd, timeout 30s)"]
+    MODE -->|"NO"| STUB["return STUB preview"]
+    RUN --> CHECK["returncode equal 0"]
     CHECK -->|"YES"| OUT["return stdout"]
-    CHECK -->|"NO"| ERR["return 'kubectl exited with code X\\nSTDERR: ...'"]
+    CHECK -->|"NO"| ERR["return error with exit code and stderr"]
 ```
 
 #### PromQL and LogQL — HTTP API calls
 
 ```mermaid
 flowchart TD
-    IN["promql_query(query='up', operation='instant')"] --> VAL["validate_promql('instant', 'up')<br/>✅ 'instant' is allowed<br/>✅ no forbidden keywords in 'up'"]
-    VAL --> BUILD["Build URL: http://localhost:9090/api/v1/query?query=up"]
-    BUILD --> MODE{"is_live()?"}
-    MODE -->|"YES"| HTTP["httpx.get(url, params={'query': 'up'}, timeout=15)"]
-    MODE -->|"NO"| STUB["return '[T2.3 STUB] Would query Prometheus: ...'"]
-    HTTP --> CHECK{"HTTP status?"}
+    IN["promql_query(query up, operation instant)"] --> VAL["validate_promql: instant is allowed, no forbidden keywords"]
+    VAL --> BUILD["Build Prometheus HTTP API URL"]
+    BUILD --> MODE{"is_live"}
+    MODE -->|"YES"| HTTP["httpx.get with timeout 15s"]
+    MODE -->|"NO"| STUB["return STUB preview"]
+    HTTP --> CHECK{"HTTP status"}
     CHECK -->|"200"| PARSE["return JSON response text"]
-    CHECK -->|"ConnectionRefused"| ERR1["return '{\"error\": \"connection refused\"}'"]
-    CHECK -->|"Timeout"| ERR2["return '{\"error\": \"request timed out\"}'"]
+    CHECK -->|"ConnectionRefused"| ERR1["return connection refused error"]
+    CHECK -->|"Timeout"| ERR2["return request timed out error"]
 ```
 
 > 🗣️ **The HTTP client has structured error handling.** Every possible failure
@@ -598,17 +587,17 @@ Found 10 document(s) for: "how does the /ask endpoint work?"
 
 ```mermaid
 flowchart TD
-    Q["rag_search(query)"] --> CHECK{"query empty?"}
-    CHECK -->|"YES"| E1["❌ Please provide a non-empty search query."]
-    CHECK -->|"NO"| STUB{"is_stub()?"}
-    STUB -->|"YES"| S1["[T2.4 STUB] Would search the KB for: ..."]
-    STUB -->|"NO"| IMP{"can import sentinel_rag?"}
-    IMP -->|"NO"| E2["❌ RAG pipeline not available: ..."]
-    IMP -->|"YES"| CALL{"retrieve() succeeds?"}
-    CALL -->|"ValueError"| E3["❌ Invalid query: ..."]
-    CALL -->|"RuntimeError"| E4["❌ Knowledge base unavailable: ..."]
-    CALL -->|"other Exception"| E5["❌ Unexpected error: ..."]
-    CALL -->|"OK"| FMT["Format + return results"]
+    Q["rag_search(query)"] --> CHECK{"query empty"}
+    CHECK -->|"YES"| E1["error: need non-empty query"]
+    CHECK -->|"NO"| STUB{"is_stub"}
+    STUB -->|"YES"| S1["return STUB preview"]
+    STUB -->|"NO"| IMP{"can import sentinel_rag"}
+    IMP -->|"NO"| E2["error: RAG pipeline not available"]
+    IMP -->|"YES"| CALL{"retrieve succeeds"}
+    CALL -->|"ValueError"| E3["error: Invalid query"]
+    CALL -->|"RuntimeError"| E4["error: KB unavailable"]
+    CALL -->|"other Exception"| E5["error: Unexpected error"]
+    CALL -->|"OK"| FMT["Format and return results"]
 ```
 
 > 🗣️ **Every tool returns a string.** Tools never raise exceptions — they return
@@ -650,25 +639,25 @@ WebSocket (ws:// /chat/ws, Phase 2):
 ```mermaid
 sequenceDiagram
     participant Browser
-    participant Server as FastAPI /chat/ws
+    participant Server as FastAPI chat/ws
     participant Agent as LangGraph Agent
     participant Tools as Tool Node
 
-    Browser->>Server: {"type":"chat","query":"list pods"}
-    Server->>Agent: graph.astream(initial_state, stream_mode="updates")
+    Browser->>Server: chat message with query
+    Server->>Agent: graph.astream with stream_mode updates
 
-    Agent->>Server: {"type":"token","text":"Let me check..."} (if streaming)
-    Server->>Browser: {"type":"token","text":"Let me check..."}
+    Agent->>Server: token event (if streaming)
+    Server->>Browser: token event
 
-    Agent->>Server: {"type":"tool","name":"kubectl_get","args":{"resource":"pods"}}
-    Server->>Browser: {"type":"tool","name":"kubectl_get","args":{"resource":"pods"}}
+    Agent->>Server: tool event (kubectl_get, args)
+    Server->>Browser: tool event
 
-    Agent->>Tools: Execute kubectl_get("pods")
-    Tools->>Server: {"type":"tool_result","name":"kubectl_get","result":"NAME  READY..."}
-    Server->>Browser: {"type":"tool_result","name":"kubectl_get","result":"NAME  READY..."}
+    Agent->>Tools: Execute kubectl_get
+    Tools->>Server: tool_result event
+    Server->>Browser: tool_result event
 
-    Agent->>Server: {"type":"token","text":"There are 7 pods running:"}
-    Server->>Browser: {"type":"token","text":"There are 7 pods running:"}
+    Agent->>Server: token event with answer text
+    Server->>Browser: token event with answer text
 
     Agent->>Server: {"type":"sources","sources":[...]}  (if rag_search was called)
     Server->>Browser: {"type":"sources","sources":[...]}
@@ -692,15 +681,15 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    subgraph "graph.astream() — LangGraph streaming"
-        DIR["stream_mode='updates'<br/>Yields a dict after EACH node executes:<br/>{'sre_agent': {...state_changes...}}<br/>{'tools': {...state_changes...}}<br/>{'sre_agent': {...state_changes...}}"]
+    subgraph STREAMING["graph.astream: LangGraph streaming"]
+        DIR["stream_mode=updates yields a dict after EACH node executes"]
     end
 
-    subgraph "Event extraction from state changes"
-        E1["chunk['sre_agent'] → new AIMessage?<br/>→ extract content → token event"]
-        E2["chunk['sre_agent'] → AIMessage with tool_calls?<br/>→ extract each call → tool event"]
-        E3["chunk['tools'] → ToolMessages?<br/>→ extract name + result → tool_result event"]
-        E4["chunk['tools'] → rag_search results?<br/>→ parse sources → sources event"]
+    subgraph EVENTS["Event extraction from state changes"]
+        E1["sre_agent new AIMessage: extract content as token event"]
+        E2["sre_agent AIMessage with tool_calls: extract as tool event"]
+        E3["tools ToolMessages: extract name and result as tool_result event"]
+        E4["tools rag_search results: parse as sources event"]
     end
 ```
 
@@ -788,21 +777,21 @@ flowchart TD
 flowchart TD
     MOUNT["Component mounts"] --> CONNECT["new WebSocket(wsUrl)"]
     CONNECT --> OPEN["onopen: setError(null)"]
-    CONNECT --> MSG["onmessage: parse JSON → dispatch event"]
-    CONNECT --> CLOSE["onclose: reconnect after 1s, 2s, 4s, 8s, 16s<br/>(exponential backoff, max 5 retries)"]
+    CONNECT --> MSG["onmessage: parse JSON, dispatch event"]
+    CONNECT --> CLOSE["onclose: reconnect (exponential backoff, max 5 retries)"]
     CONNECT --> ERR["onerror: close and retry"]
 
-    MSG --> TOKEN{"type?"}
+    MSG --> TOKEN{"event type"}
     TOKEN -->|"token"| T1["append to answer text"]
     TOKEN -->|"tool"| T2["add to toolCalls list"]
     TOKEN -->|"tool_result"| T3["update matching tool call with result"]
     TOKEN -->|"sources"| T4["set sources array"]
-    TOKEN -->|"done"| T5["set isStreaming = false"]
+    TOKEN -->|"done"| T5["set isStreaming to false"]
     TOKEN -->|"error"| T6["set error message, stop streaming"]
 
     SEND["User submits query"] --> RESET["reset answer, toolCalls, sources"]
-    RESET --> SENDWS["ws.send({type:'chat', query})"]
-    SENDWS --> STREAM["set isStreaming = true"]
+    RESET --> SENDWS["ws.send chat query"]
+    SENDWS --> STREAM["set isStreaming to true"]
 ```
 
 > 🗣️ **The hook doesn't use `useEffect` for sending.** Sending is done via
@@ -843,18 +832,18 @@ Production (sentinel.local):
 flowchart TD
     USER["User submits question"] --> STREAM["isStreaming = true"]
 
-    STREAM --> CHECK1{"Any tool calls?"}
-    CHECK1 -->|"No"| THINK["🧠 Thinking…<br/>(spinner, no tools called yet)"]
-    CHECK1 -->|"Yes"| CHECK2{"Tool results arrived?"}
+    STREAM --> CHECK1{"Any tool calls"}
+    CHECK1 -->|"No"| THINK["Thinking: spinner, no tools called yet"]
+    CHECK1 -->|"Yes"| CHECK2{"Tool results arrived"}
 
-    CHECK2 -->|"No (running)"| LIVE["🔧 ToolCallCard with live spinner<br/>'kubectl_get(pods)  Running…'"]
-    CHECK2 -->|"Yes"| CHECK3{"Answer text started?"}
+    CHECK2 -->|"No (running)"| LIVE["ToolCallCard with live spinner"]
+    CHECK2 -->|"Yes"| CHECK3{"Answer text started"}
 
-    CHECK3 -->|"No"| SYNTH["🖥️ Synthesizing answer…<br/>(Cpu icon pulsing)"]
-    CHECK3 -->|"Yes"| TOKEN["Streaming tokens<br/>+ blinking cursor ▐"]
+    CHECK3 -->|"No"| SYNTH["Synthesizing answer (Cpu icon pulsing)"]
+    CHECK3 -->|"Yes"| TOKEN["Streaming tokens with blinking cursor"]
 
-    TOKEN --> CHECK4{"isStreaming = false?"}
-    CHECK4 -->|"Yes"| DONE["✅ Show sources block<br/>Answer complete"]
+    TOKEN --> CHECK4{"isStreaming is false"}
+    CHECK4 -->|"Yes"| DONE["Show sources block, answer complete"]
 ```
 
 #### SourceChip component — clickable citations
@@ -863,15 +852,15 @@ flowchart TD
 flowchart TD
     SOURCES["Sources array from rag_search"] --> CHIP["SourceChip component"]
 
-    subgraph "Each source becomes a badge"
-        BADGE["[1] api/main.py:42-58<br/>(green monospace chip)"]
+    subgraph BADGES["Each source becomes a badge"]
+        BADGE["Chip: api/main.py:42-58 (green monospace)"]
         BADGE --> HOVER["Mouse hover"]
         BADGE --> CLICK["Click"]
     end
 
-    HOVER --> POPOVER["Popover appears:<br/>┌─ api/main.py:42-58 ───── [✕] ─┐<br/>│  @app.get('/ping')           │<br/>│  async def ping():            │<br/>│      return {'ping': 'pong'}  │<br/>└──────────────────────────────┘<br/>(animated entrance, 150ms fade+slide)"]
+    HOVER --> POPOVER["Popover shows snippet with animated entrance"]
 
-    CLICK --> PIN["Popover is PINNED open<br/>(click again or press ✕ to dismiss)"]
+    CLICK --> PIN["Popover pinned open till dismissed"]
 ```
 
 > 🗣️ **The popover has two modes.** Hover shows it temporarily (disappears on
@@ -882,13 +871,13 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    TC["ToolCallCard component"] --> HEADER["Header (always visible):<br/>⚙️ spinner (running) or ✅ checkmark (done)<br/>name: cyan  args: gray  status: 'Running…' or 'Done'<br/>▼ expand chevron (if result available)"]
+    TC["ToolCallCard component"] --> HEADER["Header always visible: spinner or checkmark, tool name, args, status, chevron"]
 
-    HEADER --> CLICK{"Click header?"}
-    CLICK -->|"Yes (has result)"| EXPAND{"Currently expanded?"}
-    EXPAND -->|"Yes"| COLLAPSE["Collapse — hide result body"]
-    EXPAND -->|"No"| SHOW["Expand — show result body"]
-    SHOW --> BODY["Result body:<br/>┌──────────────────────┐<br/>│ NAME  READY  STATUS  │<br/>│ nginx  1/1  Running  │<br/>│ ... (max 1500 chars) │<br/>└──────────────────────┘"]
+    HEADER --> CLICK{"Click header"}
+    CLICK -->|"Yes (has result)"| EXPAND{"Currently expanded"}
+    EXPAND -->|"Yes"| COLLAPSE["Collapse: hide result body"]
+    EXPAND -->|"No"| SHOW["Expand: show result body"]
+    SHOW --> BODY["Result body with table output, max 1500 chars"]
 ```
 
 #### The typing cursor — streaming feedback
@@ -956,23 +945,22 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    subgraph "Stage 1: builder"
+    subgraph BUILDER["Stage 1: builder"]
         B1["FROM node:22-alpine"]
-        B2["COPY package*.json → npm ci"]
-        B3["COPY frontend/ source"]
-        B4["ENV NEXT_PUBLIC_WS_URL=''"]
-        B5["RUN npm run build"]
-        B6["Output: .next/standalone/<br/>(self-contained Node.js server)"]
+        B2["npm ci"]
+        B3["COPY frontend source"]
+        B4["npm run build"]
+        B6["Output: .next/standalone (self-contained server)"]
     end
 
-    subgraph "Stage 2: runtime"
+    subgraph RUNTIME["Stage 2: runtime"]
         R1["FROM node:22-alpine"]
         R2["addgroup/adduser sentinel (uid 1001)"]
-        R3["COPY public/"]
-        R4["COPY .next/standalone/"]
-        R5["COPY .next/static/"]
+        R3["COPY public"]
+        R4["COPY .next/standalone"]
+        R5["COPY .next/static"]
         R6["USER sentinel"]
-        R7["CMD ['node', 'server.js']"]
+        R7["CMD node server.js"]
     end
 
     B6 --> R3
@@ -1121,58 +1109,58 @@ sequenceDiagram
     participant Tools as Tool Executor
     participant Cluster as Live Cluster
 
-    Note over User,Cluster: ═══════ PHASE D: DEPLOYMENT (T2.8) ═══════
+    Note over User,Cluster: PHASE D: DEPLOYMENT (T2.8)
 
     User->>Browser: Open http://sentinel.local
     Browser->>WS: Connect ws://sentinel.local/chat/ws
     WS-->>Browser: Connection opened
-    Browser-->>User: 🟢 Connected — Sentinel SRE Agent ready
+    Browser-->>User: Connected - Sentinel SRE Agent ready
 
-    Note over User,Cluster: ═══════ CHAT FLOW (T2.1-T2.7) ═══════
+    Note over User,Cluster: CHAT FLOW (T2.1-T2.7)
 
-    User->>Browser: Type "How many pods are running?"
-    Browser->>WS: {"type":"chat","query":"How many pods are running?"}
+    User->>Browser: Type how many pods are running
+    Browser->>WS: chat message with query
 
-    WS->>Graph: graph.astream(initial_state, stream_mode="updates")
+    WS->>Graph: graph.astream with stream_mode=updates
 
-    Note over Graph,LLM: ═══ THINK (T2.1) ═══
-    Graph->>LLM: ChatOpenAI chat completion<br/>(question + 5 tool descriptions)
-    LLM-->>Graph: AIMessage: I should call kubectl_get(pods, all_namespaces=True)
-    Graph-->>WS: {"type":"tool","name":"kubectl_get","args":{"resource":"pods","all_namespaces":true}}
+    Note over Graph,LLM: THINK (T2.1)
+    Graph->>LLM: ChatOpenAI chat completion (question + 5 tool descriptions)
+    LLM-->>Graph: AIMessage: I should call kubectl_get
+    Graph-->>WS: tool event (kubectl_get, args)
     WS-->>Browser: Tool call event
-    Browser-->>User: 🔧 kubectl_get  Running…
+    Browser-->>User: kubectl_get Running
 
-    Note over Graph,Cluster: ═══ ACT (T2.2 + T2.3) ═══
-    Graph->>Tools: Execute kubectl_get("pods", all_namespaces=True)
-    Tools->>Tools: validate_kubectl("get", "pods") ✅
-    Tools->>Cluster: subprocess.run(["kubectl","get","pods","--all-namespaces"])
-    Cluster-->>Tools: NAME  READY  STATUS  RESTARTS  AGE\nprometheus-0  1/1...
-    Tools-->>Graph: ToolMessage: 42 pods found
-    Graph-->>WS: {"type":"tool_result","name":"kubectl_get","result":"NAME..."}
+    Note over Graph,Cluster: ACT (T2.2 + T2.3)
+    Graph->>Tools: Execute kubectl_get(pods, all_namespaces)
+    Tools->>Tools: validate_kubectl(get, pods) OK
+    Tools->>Cluster: subprocess.run kubectl get pods --all-namespaces
+    Cluster-->>Tools: NAME READY STATUS RESTARTS AGE ...
+    Tools-->>Graph: ToolMessage: pods found
+    Graph-->>WS: tool_result event
     WS-->>Browser: Tool result
-    Browser-->>User: ✅ kubectl_get  Done<br/>[expanded: pod list]
+    Browser-->>User: kubectl_get Done (expanded pod list)
 
-    Note over Graph,LLM: ═══ OBSERVE + RESPOND ═══
-    Graph->>LLM: ChatOpenAI chat completion<br/>(question + tool results)
-    LLM-->>Graph: AIMessage: There are 42 pods running across all namespaces...
-    Graph-->>WS: {"type":"token","text":"There are 42 pods running"}
+    Note over Graph,LLM: OBSERVE + RESPOND
+    Graph->>LLM: ChatOpenAI chat completion (question + tool results)
+    LLM-->>Graph: AIMessage: There are 42 pods running
+    Graph-->>WS: token event
     WS-->>Browser: Streaming token
     Browser-->>User: Streaming answer with blinking cursor
 
-    Note over Graph,LLM: ═══ RAG SEARCH (T2.4) ═══
-    Graph->>LLM: Next turn: "where is the ask endpoint defined?"
-    LLM-->>Graph: AIMessage: I should call rag_search("ask endpoint")
-    Graph->>Tools: Execute rag_search("ask endpoint")
-    Tools->>Cluster: sentinel_rag.retrieve.retrieve("ask endpoint")
-    Cluster-->>Tools: [RetrievedPoint(path="api/sentinel_api/routes/ask.py:177", ...)]
-    Tools-->>Graph: ToolMessage: Found 10 documents...
-    Graph-->>WS: {"type":"sources","sources":[...]}
+    Note over Graph,LLM: RAG SEARCH (T2.4)
+    Graph->>LLM: Next turn: where is the ask endpoint
+    LLM-->>Graph: AIMessage: I should call rag_search
+    Graph->>Tools: Execute rag_search
+    Tools->>Cluster: sentinel_rag.retrieve.retrieve
+    Cluster-->>Tools: RetrievedPoint with path and snippet
+    Tools-->>Graph: ToolMessage: Found documents
+    Graph-->>WS: sources event
     WS-->>Browser: Sources event
-    Browser-->>User: 📄 [1] api/sentinel_api/routes/ask.py:177-226<br/>(hover to see snippet)
+    Browser-->>User: Source chips displayed (hover to see snippet)
 
-    Graph-->>WS: {"type":"done"}
+    Graph-->>WS: done event
     WS-->>Browser: Stream complete
-    Browser-->>User: Answer complete ✅
+    Browser-->>User: Answer complete
 ```
 
 ---
@@ -1244,22 +1232,22 @@ This table collects every issue we hit during Phase 2 implementation:
 
 ```mermaid
 flowchart LR
-    T21["T2.1<br/>LangGraph<br/>Scaffolding"] --> T22["T2.2<br/>Tool Registry<br/>+ Allow-List"]
-    T22 --> T23["T2.3<br/>Wire Tools<br/>to Live Cluster"]
-    T23 --> T24["T2.4<br/>Agent retrieves<br/>from KB"]
-    T24 --> T25["T2.5<br/>WebSocket<br/>Streaming API"]
-    T25 --> T26["T2.6<br/>Next.js<br/>Chat UI Shell"]
-    T26 --> T27["T2.7<br/>Streaming Answers<br/>+ Citations"]
-    T27 --> T28["T2.8<br/>Deploy Frontend<br/>via GitOps"]
+    T21["T2.1 LangGraph Scaffolding"] --> T22["T2.2 Tool Registry + Allow-List"]
+    T22 --> T23["T2.3 Wire Tools to Live Cluster"]
+    T23 --> T24["T2.4 Agent retrieves from KB"]
+    T24 --> T25["T2.5 WebSocket Streaming API"]
+    T25 --> T26["T2.6 Next.js Chat UI Shell"]
+    T26 --> T27["T2.7 Streaming Answers + Citations"]
+    T27 --> T28["T2.8 Deploy Frontend via GitOps"]
 
-    T21 -.->|"defines"| AGENT["🧠 Agent Graph"]
-    T22 -.->|"registers"| TOOLS["🔧 5 Tools"]
-    T23 -.->|"connects to"| CLUSTER["☸️ Live Cluster"]
-    T24 -.->|"searches"| KB["📚 Knowledge Base"]
-    T25 -.->|"streams via"| WS["🔌 WebSocket"]
-    T26 -.->|"builds"| UI["🖥️ Chat UI"]
-    T27 -.->|"polishes"| UX["✨ Streaming UX"]
-    T28 -.->|"deploys"| PROD["🚀 Production"]
+    T21 -.->|"defines"| AGENT["Agent Graph"]
+    T22 -.->|"registers"| TOOLS["5 Tools"]
+    T23 -.->|"connects to"| CLUSTER["Live Cluster"]
+    T24 -.->|"searches"| KB["Knowledge Base"]
+    T25 -.->|"streams via"| WS["WebSocket"]
+    T26 -.->|"builds"| UI["Chat UI"]
+    T27 -.->|"polishes"| UX["Streaming UX"]
+    T28 -.->|"deploys"| PROD["Production"]
 ```
 
 | Task | What it does | Input → Output | Key file | Tests |
