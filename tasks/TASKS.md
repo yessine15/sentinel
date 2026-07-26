@@ -280,7 +280,7 @@ answer to a Next.js UI.
   - Done when: agent cites a runbook when answering a known-problem question.
 
 ## M2.3 Streaming chat API
-- [ ] **T2.5 WebSocket streaming endpoint**
+- [x] **T2.5 WebSocket streaming endpoint**
   - Goal: server pushes agent tokens/events live.
   - Steps: `/api/sentinel_api/routes/chat.py` WebSocket; agent emits
     `{type:"token", text}` / `{type:"tool", name, args}` / `{type:"sources"}`

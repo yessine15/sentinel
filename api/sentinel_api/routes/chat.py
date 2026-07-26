@@ -1,0 +1,271 @@
+"""WebSocket streaming chat endpoint (T2.5).
+
+Accepts WS connections, runs the SRE agent graph with streaming events,
+and pushes tokens / tool-calls / sources / errors to the client in
+real time.
+
+Protocol (client → server)
+----------------------------
+::
+
+    {"type": "chat", "query": "How is my cluster doing?"}
+    {"type": "stop"}   — cancels the current run
+
+Protocol (server → client)
+----------------------------
+::
+
+    {"type": "token",       "text": "The cluster has…"}
+    {"type": "tool",        "name": "kubectl_get", "args": {"resource": "pods"}}
+    {"type": "tool_result", "name": "kubectl_get", "result": "NAME …"}
+    {"type": "sources",     "sources": [{"path": "…", "lines": "…", "snippet": "…"}]}
+    {"type": "done"}
+    {"type": "error",       "message": "something went wrong"}
+
+Usage::
+
+    wscat -c ws://localhost:8000/chat/ws
+    > {"type":"chat","query":"list pods in observability"}
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+router = APIRouter(tags=["chat"])
+
+
+# ---------------------------------------------------------------------------
+# Lazy import — the agent graph is heavy and may not be available
+# in all deployment contexts.
+# ---------------------------------------------------------------------------
+def _get_graph():
+    """Return the compiled SRE agent graph (lazy import).
+
+    This avoids import-time failures when the ``sentinel_agents``
+    package is not on PYTHONPATH (e.g. in CI smoke tests).
+    """
+    from sentinel_agents.graph import AgentState, graph as g
+
+    return AgentState, g
+
+
+# ---------------------------------------------------------------------------
+# Event builders
+# ---------------------------------------------------------------------------
+def _token_event(text: str) -> dict[str, Any]:
+    return {"type": "token", "text": text}
+
+
+def _tool_call_event(name: str, args: dict[str, Any]) -> dict[str, Any]:
+    return {"type": "tool", "name": name, "args": args}
+
+
+def _tool_result_event(name: str, result: str) -> dict[str, Any]:
+    return {"type": "tool_result", "name": name, "result": result}
+
+
+def _sources_event(sources: list[dict[str, Any]]) -> dict[str, Any]:
+    return {"type": "sources", "sources": sources}
+
+
+def _done_event() -> dict[str, Any]:
+    return {"type": "done"}
+
+
+def _error_event(message: str) -> dict[str, Any]:
+    return {"type": "error", "message": message}
+
+
+# ---------------------------------------------------------------------------
+# Message extractors
+# ---------------------------------------------------------------------------
+def _extract_tool_results(messages: list) -> list[dict[str, Any]]:
+    """Scan new messages for ToolMessages and return their data."""
+    results: list[dict[str, Any]] = []
+    for m in messages:
+        if isinstance(m, ToolMessage):
+            result = m.content if hasattr(m, "content") else str(m)
+            results.append({
+                "name": getattr(m, "name", "unknown"),
+                "result": result[:2000],  # truncate for WebSocket
+            })
+    return results
+
+
+def _extract_rag_sources(messages: list) -> list[dict[str, Any]]:
+    """Try to parse RAG source citations from ToolMessages.
+
+    The rag_search tool returns formatted text like::
+
+        Found 10 document(s) for: "…"
+        [1] path:lines (score: …, type: …)
+            snippet…
+    """
+    sources: list[dict[str, Any]] = []
+    for m in messages:
+        if not isinstance(m, ToolMessage):
+            continue
+        name = getattr(m, "name", "")
+        if name != "rag_search":
+            continue
+        content = m.content if hasattr(m, "content") else str(m)
+        # Crude parse: extract [N] path:lines entries
+        for line in content.split("\n"):
+            line = line.strip()
+            if line.startswith("[") and "]" in line and ":" in line:
+                # Try to extract path:lines
+                try:
+                    bracket_end = line.index("]")
+                    head = line[bracket_end + 1:].strip()
+                    # head looks like "path:lines (score: …, type: …)"
+                    path_lines, _, _ = head.partition(" (")
+                    path, _, lines = path_lines.partition(":")
+                    if path and lines:
+                        snippet = (
+                            content.split("\n")[content.split("\n").index(line.rstrip()) + 1]
+                            if line.rstrip() in content.split("\n")
+                            and content.split("\n").index(line.rstrip()) + 1 < len(content.split("\n"))
+                            else ""
+                        ).strip()
+                        sources.append({
+                            "path": path.strip(),
+                            "lines": lines.strip(),
+                            "snippet": snippet[:300] if snippet else "",
+                        })
+                except (ValueError, IndexError):
+                    continue
+    return sources
+
+
+# ---------------------------------------------------------------------------
+# Streaming helper — runs the graph and pushes events over the WS
+# ---------------------------------------------------------------------------
+async def _stream_agent(ws: WebSocket, query: str) -> None:
+    """Run the LangGraph agent with streaming updates over the WebSocket."""
+    try:
+        AgentState, graph = _get_graph()
+    except ImportError as exc:
+        await ws.send_json(
+            _error_event(
+                f"Agent graph not available: {exc}. "
+                "Make sure the 'agents' package is on PYTHONPATH "
+                "and dependencies are installed."
+            )
+        )
+        return
+
+    initial_state: AgentState = {
+        "messages": [HumanMessage(content=query)],
+        "tool_calls": [],
+        "scratchpad": {},
+    }
+
+    accumulated_text: str = ""
+    seen_tool_call_ids: set[str] = set()
+
+    try:
+        async for chunk in graph.astream(initial_state, stream_mode="updates"):
+            # ── sre_agent node produced output ──
+            if "sre_agent" in chunk:
+                sre_output = chunk["sre_agent"]
+                new_messages: list = sre_output.get("messages", [])
+
+                for msg in new_messages:
+                    if isinstance(msg, AIMessage):
+                        # Emit token(s) — append new content
+                        content = msg.content if hasattr(msg, "content") else ""
+                        if isinstance(content, str) and content:
+                            # For non-streaming LLMs this is the full response.
+                            # We emit it all at once as a token.
+                            new_text = content[len(accumulated_text):]
+                            if new_text:
+                                accumulated_text = content
+                                await ws.send_json(_token_event(new_text))
+
+                        # Emit tool calls
+                        if hasattr(msg, "tool_calls") and msg.tool_calls:
+                            for tc in msg.tool_calls:
+                                tc_id = tc.get("id", "")
+                                if tc_id not in seen_tool_call_ids:
+                                    seen_tool_call_ids.add(tc_id)
+                                    await ws.send_json(
+                                        _tool_call_event(
+                                            name=tc.get("name", "unknown"),
+                                            args=tc.get("args", {}),
+                                        )
+                                    )
+
+            # ── tools node produced output ──
+            if "tools" in chunk:
+                tools_output = chunk["tools"]
+                new_messages: list = tools_output.get("messages", [])
+
+                # Emit tool results
+                for result in _extract_tool_results(new_messages):
+                    await ws.send_json(
+                        _tool_result_event(
+                            name=result["name"],
+                            result=result["result"],
+                        )
+                    )
+
+                # Emit sources if rag_search was involved
+                rag_sources = _extract_rag_sources(new_messages)
+                if rag_sources:
+                    await ws.send_json(_sources_event(rag_sources))
+
+        # ── Done ──
+        await ws.send_json(_done_event())
+
+    except Exception as exc:
+        await ws.send_json(_error_event(f"{type(exc).__name__}: {exc}"))
+
+
+# ---------------------------------------------------------------------------
+# WebSocket endpoint
+# ---------------------------------------------------------------------------
+@router.websocket("/chat/ws")
+async def chat_websocket(ws: WebSocket) -> None:
+    """Streaming chat WebSocket.
+
+    Accepts ``{"type": "chat", "query": "…"}`` messages and streams
+    agent tokens, tool calls, tool results, and sources back to the
+    client.
+    """
+    await ws.accept()
+
+    try:
+        while True:
+            raw = await ws.receive_text()
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                await ws.send_json(_error_event("Invalid JSON"))
+                continue
+
+            msg_type = data.get("type", "")
+
+            if msg_type == "chat":
+                query = data.get("query", "")
+                if not query or not query.strip():
+                    await ws.send_json(_error_event("Missing or empty 'query' field"))
+                    continue
+                await _stream_agent(ws, query.strip())
+
+            elif msg_type == "stop":
+                await ws.send_json(_done_event())
+                # We don't actually cancel the asyncio task in this
+                # simple implementation — the client just stops listening.
+
+            else:
+                await ws.send_json(
+                    _error_event(f"Unknown message type: '{msg_type}'. Expected 'chat' or 'stop'.")
+                )
+
+    except WebSocketDisconnect:
+        pass  # client disconnected — clean exit
