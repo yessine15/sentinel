@@ -1,7 +1,8 @@
-"""LangGraph scaffolding — single SRE agent node with a stub tool.
+"""LangGraph SRE agent — StateGraph with allow-listed tools.
 
-T2.1: Runnable graph with typed State, one agent node, and a stub tool
-that demonstrates the tool-calling loop end-to-end.
+T2.1: Runnable graph with typed State, one agent node, tool loop.
+T2.2: Replaced stub tool with real allow-listed tool registry
+      (kubectl_get, kubectl_describe, promql_query, logql_query).
 
 Flow:
     START → sre_agent → [tool calls?] → tools → sre_agent (loop)
@@ -14,12 +15,13 @@ from __future__ import annotations
 import os
 from typing import Annotated, Any, Literal, TypedDict
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
-from langchain_core.tools import tool
+from langchain_core.messages import AIMessage, BaseMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
+
+from sentinel_agents.tools import ALLOWED_TOOLS
 
 
 # ─────────────────────────────────────────────────────────────
@@ -44,25 +46,9 @@ class AgentState(TypedDict):
 
 
 # ─────────────────────────────────────────────────────────────
-# Stub tool (T2.1 placeholder — real tools land in T2.2)
+# Tool list — populated from the allow-list registry (T2.2)
 # ─────────────────────────────────────────────────────────────
-@tool
-def get_cluster_summary() -> str:
-    """Return a high-level summary of the Kubernetes cluster health.
-
-    Use this when the user asks about cluster status, node count,
-    or overall health.
-    """
-    return (
-        "Cluster summary (stub — T2.2 will wire real kubectl):\n"
-        "- 3 nodes: 1 control-plane + 2 workers (all Ready)\n"
-        "- 42 pods running across all namespaces\n"
-        "- CPU 23 % | Memory 47 % | Disk 61 %\n"
-        "- No alerts firing\n"
-    )
-
-
-STUB_TOOLS = [get_cluster_summary]
+SRE_TOOLS = ALLOWED_TOOLS
 
 
 # ─────────────────────────────────────────────────────────────
@@ -100,7 +86,7 @@ def sre_agent_node(state: AgentState) -> dict[str, Any]:
     and routed to the tool-executor node by the conditional edge.
     """
     llm = _build_llm()
-    llm_with_tools = llm.bind_tools(STUB_TOOLS)
+    llm_with_tools = llm.bind_tools(SRE_TOOLS)
 
     response: AIMessage = llm_with_tools.invoke(state["messages"])
 
@@ -139,7 +125,7 @@ def build_graph() -> StateGraph:
 
     # Nodes
     builder.add_node("sre_agent", sre_agent_node)
-    builder.add_node("tools", ToolNode(STUB_TOOLS))
+    builder.add_node("tools", ToolNode(SRE_TOOLS))
 
     # Edges
     builder.set_entry_point("sre_agent")

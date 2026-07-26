@@ -1,4 +1,4 @@
-"""Tests for the LangGraph scaffolding (T2.1)."""
+"""Tests for the LangGraph SRE agent (T2.1 + T2.2)."""
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
@@ -24,6 +24,16 @@ class TestGraphBuild:
         assert "messages" in state
         assert "tool_calls" in state
         assert "scratchpad" in state
+
+    def test_sre_tools_are_available(self):
+        """The graph uses the real allow-listed tool set (T2.2)."""
+        from sentinel_agents.graph import SRE_TOOLS
+        assert len(SRE_TOOLS) >= 4  # kubectl_get, describe, promql, logql
+        tool_names = {t.name for t in SRE_TOOLS}
+        assert "kubectl_get" in tool_names
+        assert "kubectl_describe" in tool_names
+        assert "promql_query" in tool_names
+        assert "logql_query" in tool_names
 
 
 class TestRouter:
@@ -57,7 +67,7 @@ class TestRouter:
             "messages": [
                 AIMessage(
                     content="",
-                    tool_calls=[{"name": "get_cluster_summary", "args": {}, "id": "call_1"}],
+                    tool_calls=[{"name": "kubectl_get", "args": {"resource": "pods"}, "id": "call_1"}],
                 )
             ],
             "tool_calls": [],
@@ -82,17 +92,11 @@ class TestAgentState:
     """AgentState behaves correctly with add_messages reducer."""
 
     def test_messages_are_appended(self):
-        """Invoking the graph with a question appends messages."""
-        from sentinel_agents.graph import graph as g
-
+        """The initial state is well-formed before invocation."""
         initial: AgentState = {
             "messages": [HumanMessage(content="hello")],
             "tool_calls": [],
             "scratchpad": {},
         }
-        # We only test the state shape; we don't require a live LLM for
-        # the graph to at least start processing.
-        # The graph may fail if no LLM is available, so we only check
-        # that the state is well-formed before invocation.
         assert len(initial["messages"]) == 1
         assert isinstance(initial["messages"][0], HumanMessage)

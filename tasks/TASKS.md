@@ -258,7 +258,7 @@ answer to a Next.js UI.
     compile and run end-to-end with a stub tool.
   - Done when: `python -m sentinel_agents.run` produces a chat turn.
 
-- [ ] **T2.2 Tool registry + allow-list**
+- [x] **T2.2 Tool registry + allow-list**
   - Goal: tools the agent may call, with strict allow-list enforcement.
   - Steps: `/agents/sentinel_agents/tools/` with `kubectl_get.py`,
     `kubectl_describe.py`, `promql_query.py`, `logql_query.py`; each tool
