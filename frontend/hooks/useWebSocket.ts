@@ -61,7 +61,12 @@ export interface UseWebSocketReturn {
   error: string | null;
 }
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000/chat/ws";
+const WS_URL =
+  process.env.NEXT_PUBLIC_WS_URL
+    ? process.env.NEXT_PUBLIC_WS_URL
+    : typeof window !== "undefined"
+      ? `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/chat/ws`
+      : "ws://localhost:8000/chat/ws";
 
 export function useWebSocket(): UseWebSocketReturn {
   const wsRef = useRef<WebSocket | null>(null);

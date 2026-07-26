@@ -1,0 +1,9 @@
+apiVersion: v2
+name: sentinel-frontend
+description: Sentinel chat UI — Next.js 15 frontend served behind nginx-ingress
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+maintainers:
+  - name: yessine15
+    url: https://github.com/yessine15

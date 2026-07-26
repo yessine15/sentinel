@@ -1,0 +1,35 @@
+# =============================================================
+# sentinel-frontend Helm values (local kind dev)
+# =============================================================
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/yessine15/sentinel-frontend
+  tag: "v0.1.0"
+  pullPolicy: IfNotPresent
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 250m
+    memory: 256Mi
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 3000
+
+ingress:
+  enabled: true
+  className: nginx
+  hostname: sentinel.local
+  path: /
+  tls:
+    enabled: false
+
+# WebSocket URL the browser connects to.  Empty = same-origin
+# (the Ingress routes /chat/ws to the demo-api backend).
+wsUrl: ""
