@@ -300,7 +300,7 @@ answer to a Next.js UI.
     with hover popover showing snippet; render tool-call events inline.
   - Done when: an answer streams in and shows clickable citations.
 
-- [ ] **T2.8 Deploy frontend via GitOps**
+- [x] **T2.8 Deploy frontend via GitOps**
   - Goal: UI runs in-cluster.
   - Steps: Dockerfile for Next.js; Helm chart under
     `gitops/projects/frontend/`; Ingress at `sentinel.local`.
