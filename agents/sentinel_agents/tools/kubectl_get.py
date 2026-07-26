@@ -1,19 +1,19 @@
-"""kubectl get — read-only resource listing.
+"""kubectl get — read-only resource listing (live in T2.3).
 
-Strictly allow-listed: only ``get`` verb, only safe resource types.
-Any attempt to ``delete``, ``exec``, ``apply``, etc. is blocked
-*before* a subprocess is spawned.
-
-Real execution (T2.3) will use ``subprocess.run`` against the live
-cluster.  For T2.2 the tool validates args and returns the *command
-that would be run*.
+Allow-list enforced *before* subprocess execution.
+Set ``RUN_MODE=stub`` to revert to command-preview mode.
 """
 
 from __future__ import annotations
 
 from langchain_core.tools import tool
 
-from sentinel_agents.tools.base import DisallowedVerbError, DisallowedResourceError, register
+from sentinel_agents.tools.base import (
+    DisallowedResourceError,
+    DisallowedVerbError,
+    register,
+    run_kubectl,
+)
 from sentinel_agents.tools.base import validate_kubectl as _validate
 
 
@@ -49,7 +49,7 @@ def kubectl_get(
     namespace: str = "",
     all_namespaces: bool = False,
 ) -> str:
-    """Run ``kubectl get <resource>`` and return the listing.
+    """Run ``kubectl get <resource>`` and return the live listing.
 
     Use this to inspect the current state of Kubernetes resources:
     pods, deployments, services, nodes, namespaces, events, configmaps,
@@ -64,8 +64,8 @@ def kubectl_get(
         all_namespaces: If True, list across all namespaces.
 
     Returns:
-        The command that would be executed (T2.2 stub) or the actual
-        command output (T2.3+).
+        Live ``kubectl get`` output (T2.3) or a stub preview
+        (``RUN_MODE=stub``).
     """
     # ── Allow-list enforcement ──
     try:
@@ -79,12 +79,7 @@ def kubectl_get(
         all_namespaces=all_namespaces,
     )
 
-    # T2.2 stub — return what *would* be run.
-    # T2.3 will replace this with subprocess.run(cmd, capture_output=True, text=True).
-    return (
-        f"[T2.2 STUB] Would run: {' '.join(cmd)}\n"
-        f"(Live execution will be wired in T2.3 — real kubectl output will appear here.)"
-    )
+    return run_kubectl(cmd)
 
 
 # Auto-register so the registry finds this tool.

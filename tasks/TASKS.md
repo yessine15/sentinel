@@ -266,7 +266,7 @@ answer to a Next.js UI.
     `kubectl delete`).
   - Done when: agent cannot trigger a non-allow-listed command.
 
-- [ ] **T2.3 Wire tools to live cluster**
+- [x] **T2.3 Wire tools to live cluster**
   - Goal: tools talk to the real cluster & Prometheus/Loki.
   - Steps: tools use in-cluster kubeconfig + service account (read-only
     ClusterRole); PromQL via Prometheus HTTP API; LogQL via Loki HTTP API.
