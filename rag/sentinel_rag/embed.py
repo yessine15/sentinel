@@ -105,9 +105,14 @@ class OllamaEmbedder(Embedder):
         base_url: str | None = None,
     ) -> None:
         self.model = model or os.getenv("OLLAMA_MODEL", "bge-m3")
-        self.base_url = (base_url or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")).rstrip(
-            "/"
-        )
+        self.base_url = (
+            base_url
+            or os.getenv(
+                "OLLAMA_BASE_URL",
+                # In-cluster: host Docker bridge (Ollama runs on the host).
+                "http://172.18.0.1:11434",
+            )
+        ).rstrip("/")
         self._dimension: int | None = None
 
     @property

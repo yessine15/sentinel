@@ -77,7 +77,11 @@ SPARSE_VECTOR_NAME = "sparse"
 
 def _get_qdrant_client() -> QdrantClient:
     """Build a :class:`QdrantClient` from environment variables."""
-    url = os.getenv("QDRANT_URL", "http://localhost:6333")
+    url = os.getenv(
+        "QDRANT_URL",
+        # In-cluster: k8s service DNS.  Override for local dev.
+        "http://qdrant.qdrant.svc:6333",
+    )
     api_key = os.getenv("QDRANT_API_KEY")
     if api_key:
         return QdrantClient(url=url, api_key=api_key)

@@ -44,7 +44,11 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
 
-LLM_BASE_URL: str = os.environ.get("LLM_BASE_URL", "http://llm.local/v1")
+LLM_BASE_URL: str = os.environ.get(
+    "LLM_BASE_URL",
+    # In-cluster default: use k8s service DNS.  Override for local dev.
+    "http://litellm.litellm.svc:4000/v1",
+)
 LLM_MODEL: str = os.environ.get("LLM_MODEL", "gemma4")
 LLM_TIMEOUT: int = int(os.environ.get("LLM_TIMEOUT", "120"))
 ASK_TOP_K_RETRIEVE: int = int(os.environ.get("ASK_TOP_K_RETRIEVE", "50"))
