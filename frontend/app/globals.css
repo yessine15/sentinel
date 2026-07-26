@@ -21,7 +21,62 @@ body {
   @apply bg-gray-600;
 }
 
+/* ── Custom utility for dark popover backgrounds ────────── */
+.bg-gray-850 {
+  background-color: #1a1d24;
+}
+
+/* ── Typing cursor (pulsing block at end of streaming text) */
+.typing-cursor {
+  content: "";
+}
+
+/* ── Source popover entrance animation ──────────────────── */
+.source-popover {
+  animation: popover-in 150ms ease-out;
+}
+@keyframes popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 /* ── Markdown content inside chat messages ─────────────── */
+.prose-chat p {
+  @apply mb-2 leading-relaxed;
+}
+.prose-chat ul,
+.prose-chat ol {
+  @apply my-2 ml-5 space-y-1;
+}
+.prose-chat ul {
+  @apply list-disc;
+}
+.prose-chat ol {
+  @apply list-decimal;
+}
+.prose-chat li {
+  @apply leading-relaxed;
+}
+.prose-chat strong {
+  @apply font-semibold text-gray-100;
+}
+.prose-chat a {
+  @apply text-emerald-400 underline hover:text-emerald-300;
+}
+.prose-chat h1,
+.prose-chat h2,
+.prose-chat h3 {
+  @apply mt-4 mb-2 font-semibold text-gray-200;
+}
+.prose-chat blockquote {
+  @apply my-2 border-l-2 border-emerald-500 pl-3 text-gray-400;
+}
 .prose-chat pre {
   @apply my-2 overflow-x-auto rounded-lg bg-gray-800 p-3 text-sm;
 }

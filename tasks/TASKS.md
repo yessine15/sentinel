@@ -294,7 +294,7 @@ answer to a Next.js UI.
     message list + input; a WebSocket client hook.
   - Done when: typing a message and pressing Enter forwards it to the WS.
 
-- [ ] **T2.7 Render streaming answers + citations**
+- [x] **T2.7 Render streaming answers + citations**
   - Goal: nice UX resembling ChatGPT with source chips.
   - Steps: render token stream; render source chips as clickable `[file:lines]`
     with hover popover showing snippet; render tool-call events inline.
