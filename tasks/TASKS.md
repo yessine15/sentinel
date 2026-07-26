@@ -273,7 +273,7 @@ answer to a Next.js UI.
   - Done when: agent answers "list pods in default ns" using a live query.
 
 ## M2.2 Agent ↔ RAG integration
-- [ ] **T2.4 Let the SRE agent retrieve from the KB**
+- [x] **T2.4 Let the SRE agent retrieve from the KB**
   - Goal: agent uses RAG as a tool when relevant.
   - Steps: add a `rag_search(query)` tool that calls the retrieval pipeline;
     inject results + citations into the agent's state.

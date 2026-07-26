@@ -26,14 +26,15 @@ class TestGraphBuild:
         assert "scratchpad" in state
 
     def test_sre_tools_are_available(self):
-        """The graph uses the real allow-listed tool set (T2.2)."""
+        """The graph uses the real allow-listed tool set (T2.2 + T2.4)."""
         from sentinel_agents.graph import SRE_TOOLS
-        assert len(SRE_TOOLS) >= 4  # kubectl_get, describe, promql, logql
+        assert len(SRE_TOOLS) >= 5  # kubectl_get, describe, promql, logql, rag_search
         tool_names = {t.name for t in SRE_TOOLS}
         assert "kubectl_get" in tool_names
         assert "kubectl_describe" in tool_names
         assert "promql_query" in tool_names
         assert "logql_query" in tool_names
+        assert "rag_search" in tool_names
 
 
 class TestRouter:
