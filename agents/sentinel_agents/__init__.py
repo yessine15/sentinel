@@ -1,7 +1,6 @@
-"""Sentinel Agents package — LangGraph orchestrator.
+"""Sentinel Agents package — LangGraph SRE agent orchestrator.
 
-Real agents land in Phase 2. For T0.8 (CI skeleton) this just exposes a
-version string so pytest has something to import-and-check.
+Phase 2 (T2.1+): LangGraph StateGraph with tool-calling SRE agent.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
