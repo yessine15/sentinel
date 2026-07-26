@@ -65,7 +65,11 @@ def _build_llm() -> ChatOpenAI:
     LLM_MODEL : str
         Model name to request from the gateway (default ``gemma4``).
     """
-    base_url = os.environ.get("LLM_GATEWAY_URL", "http://localhost:4000/v1")
+    base_url = os.environ.get(
+        "LLM_GATEWAY_URL",
+        # In-cluster: k8s service DNS.  Override for local dev.
+        "http://litellm.litellm.svc:4000/v1",
+    )
     model = os.environ.get("LLM_MODEL", "gemma4")
     return ChatOpenAI(
         base_url=base_url,

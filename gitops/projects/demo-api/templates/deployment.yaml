@@ -33,6 +33,10 @@ spec:
           env:
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: {{ .Values.otel.exporterEndpoint | quote }}
+            {{- range .Values.env }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+            {{- end }}
           {{- with .Values.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
