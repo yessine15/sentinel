@@ -1,14 +1,19 @@
-"""kubectl describe — read-only resource inspection.
+"""kubectl describe — read-only resource inspection (live in T2.3).
 
-Strictly allow-listed: only ``describe`` verb, only safe resource types.
-Any attempt to describe a disallowed resource is blocked before execution.
+Allow-list enforced *before* subprocess execution.
+Set ``RUN_MODE=stub`` to revert to command-preview mode.
 """
 
 from __future__ import annotations
 
 from langchain_core.tools import tool
 
-from sentinel_agents.tools.base import DisallowedVerbError, DisallowedResourceError, register
+from sentinel_agents.tools.base import (
+    DisallowedResourceError,
+    DisallowedVerbError,
+    register,
+    run_kubectl,
+)
 from sentinel_agents.tools.base import validate_kubectl as _validate
 
 
@@ -18,7 +23,7 @@ def kubectl_describe(
     name: str,
     namespace: str = "",
 ) -> str:
-    """Run ``kubectl describe <resource> <name>`` and return the details.
+    """Run ``kubectl describe <resource> <name>`` and return live details.
 
     Use this to get detailed information about a specific Kubernetes
     resource: pod events, deployment status, node conditions, service
@@ -31,8 +36,8 @@ def kubectl_describe(
             resources like nodes).
 
     Returns:
-        The command that would be executed (T2.2 stub) or the actual
-        command output (T2.3+).
+        Live ``kubectl describe`` output (T2.3) or a stub preview
+        (``RUN_MODE=stub``).
     """
     # ── Allow-list enforcement ──
     try:
@@ -44,11 +49,7 @@ def kubectl_describe(
     if namespace:
         cmd.extend(["-n", namespace])
 
-    # T2.2 stub — return what *would* be run.
-    return (
-        f"[T2.2 STUB] Would run: {' '.join(cmd)}\n"
-        f"(Live execution will be wired in T2.3 — real kubectl output will appear here.)"
-    )
+    return run_kubectl(cmd)
 
 
 register(kubectl_describe, category="kubernetes")

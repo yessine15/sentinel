@@ -257,7 +257,7 @@ class TestToolSmoke:
     def test_kubectl_get_invoke(self):
         from sentinel_agents.tools.kubectl_get import kubectl_get
         result = kubectl_get.invoke({"resource": "pods", "namespace": "default"})
-        assert "[T2.2 STUB]" in result
+        assert "Would run: kubectl get pods" in result
         assert "BLOCKED" not in result
 
     def test_kubectl_describe_invoke(self):
@@ -267,7 +267,7 @@ class TestToolSmoke:
             "name": "nginx",
             "namespace": "default",
         })
-        assert "[T2.2 STUB]" in result
+        assert "Would run: kubectl describe deployment nginx" in result
         assert "BLOCKED" not in result
 
     def test_promql_query_invoke(self):
@@ -276,7 +276,7 @@ class TestToolSmoke:
             "query": "container_memory_usage_bytes",
             "operation": "instant",
         })
-        assert "[T2.2 STUB]" in result
+        assert "Would query Prometheus" in result
         assert "BLOCKED" not in result
 
     def test_logql_query_invoke(self):
@@ -285,7 +285,7 @@ class TestToolSmoke:
             "query": '{app="demo-api"}',
             "operation": "query",
         })
-        assert "[T2.2 STUB]" in result
+        assert "Would query Loki" in result
         assert "BLOCKED" not in result
 
 
