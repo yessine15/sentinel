@@ -288,7 +288,7 @@ answer to a Next.js UI.
   - Done when: a browser tool (`wscat`) sees streaming token events.
 
 ## M2.4 Frontend chat UI
-- [ ] **T2.6 Scaffold Next.js app**
+- [x] **T2.6 Scaffold Next.js app**
   - Goal: a clean chat UI shell.
   - Steps: `npx create-next-app frontend`; tailwind; a chat layout with
     message list + input; a WebSocket client hook.

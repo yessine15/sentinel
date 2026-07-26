@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+/* ── Base ───────────────────────────────────────────────── */
+html,
+body {
+  @apply bg-gray-950 text-gray-100 antialiased;
+  height: 100%;
+}
+
+/* ── Scrollbar styling ──────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  @apply rounded-full bg-gray-700;
+}
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-gray-600;
+}
+
+/* ── Markdown content inside chat messages ─────────────── */
+.prose-chat pre {
+  @apply my-2 overflow-x-auto rounded-lg bg-gray-800 p-3 text-sm;
+}
+.prose-chat code {
+  @apply rounded bg-gray-800 px-1 py-0.5 text-sm text-emerald-300;
+}
+.prose-chat pre code {
+  @apply bg-transparent p-0 text-gray-200;
+}
