@@ -330,11 +330,21 @@ the safe execution bridge.
   - Done when: submitting "crashed pods?", "how does RAG work?", and
     "hello!" are correctly classified and routed live.
 
-- [ ] **T3.2 Security Agent**
+- [x] **T3.2 Security Agent**
   - Goal: classifies security relevance + cross-checks runtime events/CVEs.
-  - Steps: new tools `trivy_scan.py`, `cve_lookup.py`,
-    `falco_events.py`, `tetragon_events.py`; agent decides if the incident
-    is security-related.
+  - Steps: new tools `trivy_scan.py` (image/fs/repo vuln + misconfig + secret
+    scanning via the trivy CLI, allow-listed targets/scanners/severities),
+    `cve_lookup.py` (single-CVE lookup against the public OSV.dev API,
+    canonical CVE-YYYY-NNNN id validated), `falco_events.py` (read-only
+    Falco alerts — "shell in container", "/etc/shadow" reads, etc.),
+    `tetragon_events.py` (read-only eBPF exec/network/file/dns events);
+    a dedicated `security_agent_node` with a `SECURITY_TOOLS` subset
+    (trivy + cve + falco + tetragon + kubectl get/describe + rag_search),
+    its own `sec_tools` ToolNode + `should_continue_security` router, and a
+    `security` category in the triage prompt + keyword fallback; the chat
+    WebSocket streams `security_agent` events through the same token/tool
+    flow as the SRE agent.  The agent decides if the incident is
+    security-related using these tools.
   - Done when: a "suspicious exec in a pod" payload is flagged security.
 
 - [ ] **T3.3 Cost Agent**

@@ -27,11 +27,16 @@ from sentinel_agents.tools.base import (
 # Registry
 # ════════════════════════════════════════════════════════════
 class TestRegistry:
-    """The tool registry discovers all five allow-listed tools."""
+    """The tool registry discovers all nine allow-listed tools.
 
-    def test_get_all_tools_returns_five_tools(self):
+    T2.2: five SRE tools.  T3.2: four security tools (trivy, cve, falco,
+    tetragon).  Total: nine.
+    """
+
+    def test_get_all_tools_returns_nine_tools(self):
         tools = get_all_tools()
-        assert len(tools) == 5  # kubectl_get, describe, promql, logql, rag_search
+        assert len(tools) == 9  # kubectl_get, describe, promql, logql, rag_search
+        #                      #   + trivy_scan, cve_lookup, falco_events, tetragon_events
 
     def test_get_tool_names_is_sorted(self):
         names = get_tool_names()
@@ -41,11 +46,25 @@ class TestRegistry:
         assert "promql_query" in names
         assert "logql_query" in names
         assert "rag_search" in names
+        # T3.2 security tools
+        assert "trivy_scan" in names
+        assert "cve_lookup" in names
+        assert "falco_events" in names
+        assert "tetragon_events" in names
 
     def test_every_tool_has_name_and_docstring(self):
         for t in get_all_tools():
             assert t.name, f"Tool has no name: {t}"
             assert t.description, f"Tool {t.name} has no description"
+
+    def test_security_tools_categorised(self):
+        """T3.2: the four security tools are tagged 'security'."""
+        from sentinel_agents.tools import ALLOWED_TOOLS
+        sec = [t for t in ALLOWED_TOOLS
+               if getattr(t, "__sentinel_category__", None) == "security"]
+        assert {t.name for t in sec} == {
+            "trivy_scan", "cve_lookup", "falco_events", "tetragon_events"
+        }
 
 
 # ════════════════════════════════════════════════════════════
