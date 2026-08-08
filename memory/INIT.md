@@ -341,22 +341,48 @@
   (triage→dispatch→3 specialists in parallel→synthesis→planner→
   approval) and paused at `awaiting_approval` with a real plan
   ("patch deployment/demo-api: increase memory limits…").
+- [x] **T3.6 Human-in-the-loop approval** (2026-08-08, v0.8.0):
+  Plan store in `api/sentinel_api/plans.py` with two backends —
+  `PostgresPlanStore` (psycopg, `plans` table: id UUID, incident,
+  synthesis, plan JSONB, status pending/approved/rejected,
+  created/decided timestamps; `psycopg[binary]` added to the `db`
+  extra) and `MemoryPlanStore` (RUN_MODE=stub / DB-unreachable
+  fallback); `get_plan_store()` factory.  `/plans` API
+  (`api/sentinel_api/routes/plans.py`): POST create, GET list
+  (?status=), GET /{id}, POST /{id}/approve, POST /{id}/reject —
+  approve/reject call `resume_plan_graph(plan, decision)` and
+  return the resulting `approval_status` (the "unblock the graph"
+  primitive; T3.7 extends it with the Executor node).  chat.py
+  persists the pending plan when the approval event fires and
+  includes `plan_id` in the event.  Frontend: `useWebSocket`
+  handles the `approval` event + `approvePlan`/`rejectPlan`
+  (POST via the Next.js /api proxy); new `components/PlanCard.tsx`
+  (priority badge, rationale, numbered steps, Approve/Reject
+  buttons, decided state); `page.tsx` renders it while awaiting
+  review.  276 tests pass (up from 252: +24 plans/resume), 10
+  skipped.  Live verification: Postgres round-trip via port-forward
+  (create → list → approve → row status 'approved' in DB → reject
+  flow) AND full UI end-to-end: sent a kube_pod_oom alert through
+  the chat UI → plan card appeared (priority high, 2 steps) →
+  clicked Approve → card flipped to "✅ Approved — the graph has
+  been unblocked." (T3.6 acceptance).
 - [ ] Phase 4: Security hardening.
 - [ ] Phase 5: Polish, evals, portfolio.
 
-> **We are at:** Phase 3 in progress. T3.1–T3.5 done. T3.6 next.
-> **Next up:** T3.6 — Human-in-the-loop approval (persist pending plan in
-> Postgres, `/plans/{id}/approve` + `/reject` endpoints, UI plan card).
+> **We are at:** Phase 3 in progress. T3.1–T3.6 done. T3.7 next.
+> **Next up:** T3.7 — Executor Agent (the only agent that can act; creates
+> RemediationPlan objects via the operator API; dry-run first).
 > **Foundation:** kind cluster, ingress-nginx, ArgoCD (App-of-Apps), full
 > observability stack (Prometheus, Alertmanager, Grafana, Loki, Tempo),
 > Qdrant vector DB, Postgres 16 + pgvector, LiteLLM gateway at
-> http://llm.local, FastAPI `/ask` + WebSocket `/chat/ws` endpoints,
-> LangGraph multi-agent graph (triage → SRE / Knowledge(RAG) / Security /
-> Cost specialists + incident loop: parallel fan-out → synthesis →
-> planner → approval pause) with 11 allow-listed tools (kubectl
-> get/describe, PromQL, LogQL, RAG search, rag_evidence, trivy_scan,
-> cve_lookup, falco_events, tetragon_events, kube_resource_usage),
-> Next.js 15 chat UI with streaming answers + clickable citation chips,
+> http://llm.local, FastAPI `/ask` + WebSocket `/chat/ws` + `/plans`
+> (approve/reject) endpoints, LangGraph multi-agent graph (triage → SRE /
+> Knowledge(RAG) / Security / Cost specialists + incident loop: parallel
+> fan-out → synthesis → planner → human approval gate) with 11
+> allow-listed tools (kubectl get/describe, PromQL, LogQL, RAG search,
+> rag_evidence, trivy_scan, cve_lookup, falco_events, tetragon_events,
+> kube_resource_usage), Next.js 15 chat UI with streaming answers +
+> clickable citation chips + remediation plan cards (Approve/Reject),
 > Helm chart + ArgoCD Application for frontend deployment at
 > http://sentinel.local.
 

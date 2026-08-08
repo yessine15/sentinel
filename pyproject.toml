@@ -56,6 +56,9 @@ db = [
     "alembic>=1.14.0",
     "pgvector>=0.3.0",
     "redis>=5.0.0",
+    # T3.6: plan store (human-in-the-loop approval) — sync driver used
+    # by api/sentinel_api/plans.py (same driver as the RAG connector).
+    "psycopg[binary]>=3.2.0",
 ]
 
 # Phase 2: Agents

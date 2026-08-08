@@ -1180,6 +1180,66 @@ def approval_node(state: AgentState) -> dict[str, Any]:
 
 
 # ─────────────────────────────────────────────────────────────
+# Resume graph (T3.6) — continue past the human gate
+# ─────────────────────────────────────────────────────────────
+def build_resume_graph() -> StateGraph:
+    """Build the tiny "resume" graph used after a human decision.
+
+    START → approval → END
+
+    The approval node reads ``scratchpad["approval_decision"]`` (set
+    from the persisted plan's status) plus ``scratchpad["plan"]`` and
+    produces the final ``approval_status``.  T3.7 extends this graph
+    with the Executor Agent node after ``approval``.
+    """
+    builder = StateGraph(AgentState)
+    builder.add_node("approval", approval_node)
+    builder.set_entry_point("approval")
+    builder.add_edge("approval", END)
+    return builder.compile()
+
+
+_resume_graph = build_resume_graph()
+
+
+def resume_plan_graph(plan: dict[str, Any], decision: str) -> str:
+    """Resume the graph with a human decision on a persisted plan.
+
+    This is the mechanism that makes "clicking Approve in the UI
+    unblocks the graph" work (T3.6): given the persisted plan and the
+    decision (``"approved"`` / ``"rejected"``), it runs the approval
+    node with the decision injected and returns the final
+    ``approval_status``.
+
+    Args:
+        plan: The persisted plan dict (as returned by the plans API).
+        decision: ``"approved"`` or ``"rejected"``.
+
+    Returns:
+        The resulting ``approval_status`` — ``"approved"`` or
+        ``"rejected"`` (never ``"awaiting_approval"`` here, because a
+        decision is always provided).
+    """
+    state: AgentState = {
+        "messages": [],
+        "tool_calls": [],
+        "scratchpad": {
+            "approval_decision": decision,
+            "plan": plan.get("plan", plan),
+            "pending_plan": plan.get("plan", plan),
+        },
+        "routing": "incident",
+        "classification_json": "",
+        "incident": plan.get("incident", ""),
+        "synthesis": plan.get("synthesis", ""),
+        "plan": plan.get("plan", plan),
+        "approval_status": "",
+    }
+    result = _resume_graph.invoke(state)
+    return result.get("approval_status", "awaiting_approval")
+
+
+# ─────────────────────────────────────────────────────────────
 # Graph builder (updated T3.1, T3.2, T3.3, T3.4, T3.5)
 # ─────────────────────────────────────────────────────────────
 def build_graph() -> StateGraph:

@@ -39,8 +39,35 @@ export interface ErrorEvent {
   message: string;
 }
 
+// ── T3.5/T3.6 incident-loop events ──────────────────────────
+export interface PlanStep {
+  action: string;
+  target: string;
+  detail: string;
+}
+
+export interface Plan {
+  priority?: string;
+  rationale?: string;
+  steps?: PlanStep[];
+  draft?: boolean;
+}
+
+export interface ApprovalEvent {
+  type: "approval";
+  status: "awaiting_approval" | "approved" | "rejected";
+  plan: Plan;
+  plan_id?: string;
+}
+
 export type ServerEvent =
-  TokenEvent | ToolEvent | ToolResultEvent | SourcesEvent | DoneEvent | ErrorEvent;
+  | TokenEvent
+  | ToolEvent
+  | ToolResultEvent
+  | SourcesEvent
+  | DoneEvent
+  | ErrorEvent
+  | ApprovalEvent;
 
 // ── Hook state ────────────────────────────────────────────────
 
@@ -59,6 +86,12 @@ export interface UseWebSocketReturn {
   stop: () => void;
   /** The last error message, if any. */
   error: string | null;
+  /** Pending remediation plan awaiting approval (T3.6). */
+  approval: { plan: Plan; planId: string; status: string } | null;
+  /** Approve the pending plan — unblocks the graph. */
+  approvePlan: () => Promise<void>;
+  /** Reject the pending plan — unblocks the graph. */
+  rejectPlan: () => Promise<void>;
 }
 
 const WS_URL =
@@ -75,6 +108,7 @@ export function useWebSocket(): UseWebSocketReturn {
   const [sources, setSources] = useState<SourcesEvent["sources"]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [approval, setApproval] = useState<UseWebSocketReturn["approval"]>(null);
 
   // ── Connect on mount ──
   useEffect(() => {
@@ -113,6 +147,15 @@ export function useWebSocket(): UseWebSocketReturn {
               break;
             case "done":
               setIsStreaming(false);
+              break;
+            case "approval":
+              // T3.6: show the plan card with Approve/Reject buttons.
+              setIsStreaming(false);
+              setApproval({
+                plan: evt.plan,
+                planId: evt.plan_id ?? "",
+                status: evt.status,
+              });
               break;
             case "error":
               setError(evt.message);
@@ -155,6 +198,7 @@ export function useWebSocket(): UseWebSocketReturn {
     setToolCalls([]);
     setSources([]);
     setError(null);
+    setApproval(null);
     setIsStreaming(true);
     wsRef.current.send(JSON.stringify({ type: "chat", query }));
   }, []);
@@ -167,5 +211,33 @@ export function useWebSocket(): UseWebSocketReturn {
     setIsStreaming(false);
   }, []);
 
-  return { send, answer, toolCalls, sources, isStreaming, stop, error };
+  // ── approve / reject (T3.6) ──────────────────────────────
+  // POST through the Next.js /api proxy → FastAPI /plans/{id}/approve.
+  const decide = useCallback(async (decision: "approve" | "reject") => {
+    setApproval((prev) => {
+      if (!prev || !prev.planId) {
+        setError("No pending plan to decide on.");
+        return prev;
+      }
+      void fetch(`/api/plans/${prev.planId}/${decision}`, { method: "POST" })
+        .then((res) => res.json())
+        .then((body: { approval_status?: string; status?: string }) => {
+          setApproval({
+            plan: prev.plan,
+            planId: prev.planId,
+            status: body.approval_status ?? body.status ?? "pending",
+          });
+          setError(null);
+        })
+        .catch((e: unknown) => {
+          setError(`Failed to ${decision} plan: ${String(e)}`);
+        });
+      return prev;
+    });
+  }, []);
+
+  const approvePlan = useCallback(() => decide("approve"), [decide]);
+  const rejectPlan = useCallback(() => decide("reject"), [decide]);
+
+  return { send, answer, toolCalls, sources, isStreaming, stop, error, approval, approvePlan, rejectPlan };
 }

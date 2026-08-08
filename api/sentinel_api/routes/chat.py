@@ -19,8 +19,18 @@ Protocol (server → client)
     {"type": "tool",        "name": "kubectl_get", "args": {"resource": "pods"}}
     {"type": "tool_result", "name": "kubectl_get", "result": "NAME …"}
     {"type": "sources",     "sources": [{"path": "…", "lines": "…", "snippet": "…"}]}
+    {"type": "classification", "category": "incident", "reasoning": "…", "refined_query": "…"}
+    {"type": "dispatch",    "specialists": ["sre_agent", "security_agent", "rag_agent"], "incident": "…"}
+    {"type": "synthesis",   "text": "## Incident summary …"}
+    {"type": "plan",        "plan": {"priority": "…", "steps": […]}}
+    {"type": "approval",    "status": "awaiting_approval", "plan": {…}, "plan_id": "uuid"}
     {"type": "done"}
     {"type": "error",       "message": "something went wrong"}
+
+The ``approval`` event (T3.6) carries the pending plan plus a
+``plan_id`` (persisted in Postgres) so the UI can render Approve /
+Reject buttons wired to ``POST /plans/{id}/approve`` and
+``POST /plans/{id}/reject``.
 
 Usage::
 
@@ -320,10 +330,28 @@ async def _stream_agent(ws: WebSocket, query: str) -> None:
 
             if "approval" in chunk:
                 approval_out = chunk["approval"]
+                approval_scratchpad = approval_out.get("scratchpad", {})
+                plan = approval_scratchpad.get("pending_plan", {})
+                plan_id = ""
+                # T3.6: persist the pending plan so a human can review it
+                # via /plans and the UI Approve/Reject buttons.
+                if approval_out.get("approval_status") == "awaiting_approval" and plan:
+                    try:
+                        from sentinel_api.plans import create_plan as store_plan
+
+                        stored = store_plan(
+                            incident=approval_scratchpad.get("incident", query),
+                            plan=plan,
+                            synthesis=approval_scratchpad.get("synthesis", ""),
+                        )
+                        plan_id = stored.id
+                    except Exception:
+                        plan_id = ""  # store unavailable — plan stays in-memory
                 await ws.send_json({
                     "type": "approval",
                     "status": approval_out.get("approval_status", "awaiting_approval"),
-                    "plan": approval_out.get("scratchpad", {}).get("pending_plan", {}),
+                    "plan": plan,
+                    "plan_id": plan_id,
                 })
 
             # ── tools / sec_tools / cost_tools / rag_tools node output ──

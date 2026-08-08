@@ -6,14 +6,17 @@ import { Send, Loader2, Wifi, WifiOff, Bot, User, Sparkles, Cpu } from "lucide-r
 import ReactMarkdown from "react-markdown";
 import ToolCallCard from "@/components/ToolCallCard";
 import SourceChip from "@/components/SourceChip";
+import PlanCard from "@/components/PlanCard";
 
 // ─────────────────────────────────────────────────────────────
 // Chat page
 // ─────────────────────────────────────────────────────────────
 
 export default function ChatPage() {
-  const { send, answer, toolCalls, sources, isStreaming, stop, error } = useWebSocket();
+  const { send, answer, toolCalls, sources, isStreaming, stop, error, approval, approvePlan, rejectPlan } =
+    useWebSocket();
   const [input, setInput] = useState("");
+  const [busyDecision, setBusyDecision] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -37,6 +40,17 @@ export default function ChatPage() {
     setHistory((prev) => [...prev, { question: trimmed }]);
     send(trimmed);
     setInput("");
+  };
+
+  // ── T3.6: approve/reject the pending plan (unblocks the graph) ──
+  const handleApprove = () => {
+    setBusyDecision(true);
+    void approvePlan().finally(() => setBusyDecision(false));
+  };
+
+  const handleReject = () => {
+    setBusyDecision(true);
+    void rejectPlan().finally(() => setBusyDecision(false));
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
@@ -154,6 +168,18 @@ export default function ChatPage() {
 
                     {/* Sources with popover chips */}
                     {sources.length > 0 && <SourceChip sources={sources} />}
+
+                    {/* T3.6: remediation plan awaiting human approval */}
+                    {approval && (
+                      <PlanCard
+                        plan={approval.plan}
+                        status={approval.status}
+                        planId={approval.planId}
+                        onApprove={handleApprove}
+                        onReject={handleReject}
+                        busy={busyDecision}
+                      />
+                    )}
                   </div>
                 </div>
               )}

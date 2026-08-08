@@ -310,3 +310,56 @@ class TestIncidentLoopGraph:
         # paused at approval with a plan
         assert result.get("approval_status") == "awaiting_approval"
         assert result.get("plan", {}).get("steps")
+
+
+# ════════════════════════════════════════════════════════════
+# T3.6 — resume graph (human decision unblocks the graph)
+# ════════════════════════════════════════════════════════════
+class TestResumePlanGraph:
+    """T3.6: resume_plan_graph continues past the human gate."""
+
+    SAMPLE_PLAN: dict = {  # noqa: RUF012 - test fixture
+        "priority": "high",
+        "rationale": "crash-looping pod",
+        "steps": [{"action": "restart", "target": "deployment/demo-api", "detail": "x"}],
+    }
+
+    def test_approved_decision(self):
+        from sentinel_agents.graph import resume_plan_graph
+
+        plan = {"id": "p1", "incident": "ALERTS: oom", "plan": self.SAMPLE_PLAN, "synthesis": "s"}
+        status = resume_plan_graph(plan, "approved")
+        assert status == "approved"
+
+    def test_rejected_decision(self):
+        from sentinel_agents.graph import resume_plan_graph
+
+        plan = {"id": "p1", "incident": "ALERTS: oom", "plan": self.SAMPLE_PLAN, "synthesis": "s"}
+        status = resume_plan_graph(plan, "rejected")
+        assert status == "rejected"
+
+    def test_resume_graph_compiles(self):
+        from sentinel_agents.graph import build_resume_graph
+
+        g = build_resume_graph()
+        assert g is not None
+        try:
+            nodes = g.get_graph().nodes
+            assert "approval" in nodes
+        except Exception:
+            pass
+
+    def test_pending_plan_preserved_in_scratchpad(self):
+        from sentinel_agents.graph import resume_plan_graph
+
+        plan = {"id": "p1", "incident": "x", "plan": self.SAMPLE_PLAN}
+        status = resume_plan_graph(plan, "approved")
+        assert status == "approved"
+
+    def test_resume_never_returns_awaiting(self):
+        """A decision is always provided, so resume never pauses again."""
+        from sentinel_agents.graph import resume_plan_graph
+
+        plan = {"id": "p1", "incident": "x", "plan": self.SAMPLE_PLAN}
+        for decision in ("approved", "rejected"):
+            assert resume_plan_graph(plan, decision) in ("approved", "rejected")

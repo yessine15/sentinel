@@ -410,11 +410,29 @@ the safe execution bridge.
     completes even without a gateway; chat WebSocket streams
     dispatch/synthesis/plan/approval events.
 
-- [ ] **T3.6 Human-in-the-loop approval**
+- [x] **T3.6 Human-in-the-loop approval**
   - Goal: a gate where a user approves/rejects a plan.
   - Steps: store pending plan in Postgres; expose `/plans/{id}/approve` and
     `/reject`; UI shows a plan card with Approve/Reject buttons.
   - Done when: clicking Approve in the UI unblocks the graph.
+  - Implemented: `api/sentinel_api/plans.py` — plan store with two backends:
+    `PostgresPlanStore` (psycopg, `plans` table with JSONB plan column,
+    created/decided timestamps; driver added to the `db` extra) and
+    `MemoryPlanStore` (RUN_MODE=stub / DB-unreachable fallback);
+    `get_plan_store()` factory.  `/plans` API in
+    `api/sentinel_api/routes/plans.py`: POST (create pending), GET (list
+    with ?status= filter), GET /{id}, POST /{id}/approve, POST /{id}/reject —
+    approve/reject call `resume_plan_graph` and return the resulting
+    `approval_status`.  `resume_plan_graph(plan, decision)` in graph.py runs
+    a tiny `build_resume_graph()` (approval node only) with the decision
+    injected — this is what makes clicking Approve "unblock the graph";
+    T3.7 extends it with the Executor node.  chat.py persists the pending
+    plan when the approval event fires and includes `plan_id` in the
+    event.  Frontend: `useWebSocket` handles the `approval` event and
+    exposes `approvePlan`/`rejectPlan` (POST via the Next.js /api proxy);
+    new `components/PlanCard.tsx` renders priority/rationale/steps with
+    Approve + Reject buttons; `page.tsx` shows it when a plan is awaiting
+    review and updates the status after a decision.
 
 - [ ] **T3.7 Executor Agent**
   - Goal: the *only* agent that can act; create RemediationPlan objects.
