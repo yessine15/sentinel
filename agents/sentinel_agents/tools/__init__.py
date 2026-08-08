@@ -3,6 +3,7 @@
 T2.2: SRE allow-listed tools (kubectl, PromQL, LogQL).
 T2.4: RAG search.
 T3.2: Security tools (trivy, CVE lookup, Falco, Tetragon).
+T3.3: Cost tool (kube resource usage).
 
 Usage::
 
@@ -24,6 +25,9 @@ from sentinel_agents.tools import trivy_scan  # noqa: F401
 from sentinel_agents.tools import cve_lookup  # noqa: F401
 from sentinel_agents.tools import falco_events  # noqa: F401
 from sentinel_agents.tools import tetragon_events  # noqa: F401
+
+# T3.3: Cost Agent tool
+from sentinel_agents.tools import kube_resource_usage  # noqa: F401
 
 ALLOWED_TOOLS = get_all_tools()
 """The complete list of registered, allow-listed tools."""
