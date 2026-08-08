@@ -296,21 +296,43 @@
   events.  195 tests pass (up from 139: +42 cost_tools + 14 graph),
   10 skipped (live tools).  Live smoke test: all 5 cost queries
   classified correctly by gemma4.
+- [x] **T3.4 RAG Agent** (2026-08-08, v0.6.0): New tool
+  `rag_evidence.py` wraps the Phase 1 retrieval pipeline (hybrid
+  retrieve + cross-encoder rerank) and returns structured JSON
+  evidence records (path, lines, score, source_type, snippet);
+  stub returns deterministic fake evidence with citations.
+  Dedicated `rag_agent_node` with `RAG_TOOLS` (rag_evidence +
+  rag_search — retrieval only, no cluster tools), `rag_tools`
+  ToolNode + `should_continue_rag` router, `RAG_SYSTEM_PROMPT`
+  (returns ranked evidence with `[path:lines]` markers, never free
+  text).  `knowledge` classification now routes to `rag_agent`
+  (previously sre_agent with KNOWLEDGE_SYSTEM_PROMPT).  The node
+  extracts evidence from rag_evidence ToolMessages and publishes it
+  to `scratchpad["evidence"]` — the shared-state channel through
+  which other agents receive evidence with citations via the graph
+  (T3.4 acceptance).  Chat WebSocket streams `rag_agent` events +
+  `rag_tools` results; `_extract_rag_sources` now parses both
+  rag_search text and rag_evidence JSON.  227 tests pass (up from
+  195: +18 rag_evidence + 15 graph), 10 skipped (live tools).
+  Live smoke: knowledge queries classified + routed to rag_agent by
+  gemma4; loop verified with synthetic structured tool call —
+  rag_tools executed rag_evidence and evidence flowed into state.
 - [ ] Phase 4: Security hardening.
 - [ ] Phase 5: Polish, evals, portfolio.
 
-> **We are at:** Phase 3 in progress. T3.1 + T3.2 + T3.3 done. T3.4 next.
-> **Next up:** T3.4 — RAG Agent (as a proper agent).
+> **We are at:** Phase 3 in progress. T3.1 + T3.2 + T3.3 + T3.4 done. T3.5 next.
+> **Next up:** T3.5 — Build the LangGraph loop (alert → triage → parallel
+> specialists → synthesis → plan → approval → executor → postmortem → embed).
 > **Foundation:** kind cluster, ingress-nginx, ArgoCD (App-of-Apps), full
 > observability stack (Prometheus, Alertmanager, Grafana, Loki, Tempo),
 > Qdrant vector DB, Postgres 16 + pgvector, LiteLLM gateway at
 > http://llm.local, FastAPI `/ask` + WebSocket `/chat/ws` endpoints,
-> LangGraph multi-agent graph (triage → SRE / Knowledge / Security / Cost
-> specialists) with 10 allow-listed tools (kubectl get/describe, PromQL,
-> LogQL, RAG search, trivy_scan, cve_lookup, falco_events,
-> tetragon_events, kube_resource_usage), Next.js 15 chat UI with streaming
-> answers + clickable citation chips, Helm chart + ArgoCD Application for
-> frontend deployment at http://sentinel.local.
+> LangGraph multi-agent graph (triage → SRE / Knowledge(RAG) / Security /
+> Cost specialists) with 11 allow-listed tools (kubectl get/describe,
+> PromQL, LogQL, RAG search, rag_evidence, trivy_scan, cve_lookup,
+> falco_events, tetragon_events, kube_resource_usage), Next.js 15 chat UI
+> with streaming answers + clickable citation chips, Helm chart + ArgoCD
+> Application for frontend deployment at http://sentinel.local.
 
 ---
 
