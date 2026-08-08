@@ -163,6 +163,8 @@ async def _stream_agent(ws: WebSocket, query: str) -> None:
         "messages": [HumanMessage(content=query)],
         "tool_calls": [],
         "scratchpad": {},
+        "routing": "",
+        "classification_json": "",
     }
 
     accumulated_text: str = ""
@@ -170,6 +172,26 @@ async def _stream_agent(ws: WebSocket, query: str) -> None:
 
     try:
         async for chunk in graph.astream(initial_state, stream_mode="updates"):
+            # ── triage_agent node produced output (T3.1) ──
+            if "triage_agent" in chunk:
+                triage_output = chunk["triage_agent"]
+                routing = triage_output.get("routing", "general")
+                classification_json = triage_output.get("classification_json", "{}")
+                scratchpad = triage_output.get("scratchpad", {})
+
+                # Parse classification for the frontend
+                try:
+                    classification = json.loads(classification_json)
+                except (json.JSONDecodeError, TypeError):
+                    classification = {"category": routing, "reasoning": "unknown"}
+
+                await ws.send_json({
+                    "type": "classification",
+                    "category": routing,
+                    "reasoning": classification.get("reasoning", ""),
+                    "refined_query": classification.get("refined_query", query),
+                })
+
             # ── sre_agent node produced output ──
             if "sre_agent" in chunk:
                 sre_output = chunk["sre_agent"]
