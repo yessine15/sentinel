@@ -317,22 +317,48 @@
   Live smoke: knowledge queries classified + routed to rag_agent by
   gemma4; loop verified with synthetic structured tool call —
   rag_tools executed rag_evidence and evidence flowed into state.
+- [x] **T3.5 LangGraph loop** (2026-08-08, v0.7.0): The incident
+  orchestration loop.  New triage `incident` category (prompt +
+  keyword fallback: alert/incident/firing/on-call/sev/crashloop/
+  oomkill/outage, checked FIRST).  `dispatch` node captures the raw
+  incident and fans out to SRE + Security + RAG in PARALLEL; the
+  branch routers (`should_continue*`) return `"synthesis"` when
+  routing == "incident".  `synthesis_node` merges specialist outputs
+  (SYNTHESIS_SYSTEM_PROMPT; fallback when gateway down);
+  `planner_node` proposes {priority, rationale, steps[]} remediation
+  plan (PLANNER_SYSTEM_PROMPT; draft fallback marked draft:true);
+  `approval_node` reads scratchpad["approval_decision"] →
+  approved/rejected/awaiting_approval and persists the plan in
+  scratchpad["pending_plan"] — the T3.5 pause (T3.6 wires the
+  UI/DB resume).  AgentState gains incident/synthesis/plan/
+  approval_status channels + a scratchpad MERGE reducer so parallel
+  branches keep each other's notes; all four specialist nodes
+  degrade gracefully (error AIMessage instead of crashing) so the
+  loop completes even without a gateway.  Chat WebSocket streams
+  dispatch/synthesis/plan/approval events.  252 tests pass (up from
+  227: +25 orchestration), 10 skipped (live tools).  Live smoke:
+  a Prometheus kube_pod_oom alert drove the full graph via gemma4
+  (triage→dispatch→3 specialists in parallel→synthesis→planner→
+  approval) and paused at `awaiting_approval` with a real plan
+  ("patch deployment/demo-api: increase memory limits…").
 - [ ] Phase 4: Security hardening.
 - [ ] Phase 5: Polish, evals, portfolio.
 
-> **We are at:** Phase 3 in progress. T3.1 + T3.2 + T3.3 + T3.4 done. T3.5 next.
-> **Next up:** T3.5 — Build the LangGraph loop (alert → triage → parallel
-> specialists → synthesis → plan → approval → executor → postmortem → embed).
+> **We are at:** Phase 3 in progress. T3.1–T3.5 done. T3.6 next.
+> **Next up:** T3.6 — Human-in-the-loop approval (persist pending plan in
+> Postgres, `/plans/{id}/approve` + `/reject` endpoints, UI plan card).
 > **Foundation:** kind cluster, ingress-nginx, ArgoCD (App-of-Apps), full
 > observability stack (Prometheus, Alertmanager, Grafana, Loki, Tempo),
 > Qdrant vector DB, Postgres 16 + pgvector, LiteLLM gateway at
 > http://llm.local, FastAPI `/ask` + WebSocket `/chat/ws` endpoints,
 > LangGraph multi-agent graph (triage → SRE / Knowledge(RAG) / Security /
-> Cost specialists) with 11 allow-listed tools (kubectl get/describe,
-> PromQL, LogQL, RAG search, rag_evidence, trivy_scan, cve_lookup,
-> falco_events, tetragon_events, kube_resource_usage), Next.js 15 chat UI
-> with streaming answers + clickable citation chips, Helm chart + ArgoCD
-> Application for frontend deployment at http://sentinel.local.
+> Cost specialists + incident loop: parallel fan-out → synthesis →
+> planner → approval pause) with 11 allow-listed tools (kubectl
+> get/describe, PromQL, LogQL, RAG search, rag_evidence, trivy_scan,
+> cve_lookup, falco_events, tetragon_events, kube_resource_usage),
+> Next.js 15 chat UI with streaming answers + clickable citation chips,
+> Helm chart + ArgoCD Application for frontend deployment at
+> http://sentinel.local.
 
 ---
 
