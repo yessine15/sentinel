@@ -5,7 +5,7 @@ the package (`from sentinel_api import app`) re-exports it for convenience
 so uvicorn can be pointed at `sentinel_api:app` directly.
 """
 
-__version__ = "0.1.1"
+__version__ = "0.3.0"
 
 # Re-export the FastAPI app for `uvicorn sentinel_api:app`.
 # Imported lazily to avoid a hard dependency on fastapi when someone just
