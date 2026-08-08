@@ -212,7 +212,7 @@ class TestCostToolRegistration:
         assert kube_resource_usage.description is not None
         assert len(kube_resource_usage.description) > 50
 
-    def test_tool_count_is_ten(self):
-        """After T3.3: 10 tools total (5 SRE + 4 security + 1 cost)."""
+    def test_tool_count_is_eleven(self):
+        """After T3.4: 11 tools total (5 SRE + 4 security + 1 cost + 1 rag)."""
         from sentinel_agents.tools import ALLOWED_TOOLS
-        assert len(ALLOWED_TOOLS) == 10
+        assert len(ALLOWED_TOOLS) == 11

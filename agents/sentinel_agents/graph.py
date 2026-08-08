@@ -7,6 +7,9 @@ T3.2: Security Agent specialist — security tools (trivy, cve_lookup,
       falco, tetragon) + triage "security" category + dedicated node.
 T3.3: Cost Agent specialist — kube_resource_usage tool + triage "cost"
       category + right-sizing suggestions in Terraform form.
+T3.4: RAG Agent specialist — rag_evidence tool wrapping the Phase 1
+      retrieval pipeline + triage "knowledge" category + dedicated
+      node that publishes evidence to the shared state.
 
 Flow:
     START → triage_agent → route_to_specialist
@@ -15,7 +18,12 @@ Flow:
                                 │                 tools ←─────────┘
                                 │                   ↓
                                 │                sre_agent → END
-                                ├── "knowledge" → sre_agent (with RAG hint)
+                                ├── "knowledge" → rag_agent → [tool calls?]
+                                │                   ↓            ↓
+                                │               rag_tools ←───────┘
+                                │                   ↓
+                                │                rag_agent → END (evidence
+                                │                            in scratchpad)
                                 ├── "general"   → sre_agent
                                 ├── "security"  → security_agent → [tool calls?]
                                 │                   ↓                ↓
@@ -35,7 +43,7 @@ import json
 import os
 from typing import Annotated, Any, Literal, TypedDict
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
@@ -114,6 +122,21 @@ COST_TOOLS: list = [
 ]
 """The Cost Agent's dedicated toolset — resource usage analysis via
 Prometheus, plus read-only kubectl tools to identify workloads."""
+
+# T3.4: the subset of tools the RAG Agent is allowed to call.
+# The RAG Agent is a retrieval specialist — it wraps the Phase 1
+# pipeline (rag_evidence: hybrid retrieve + rerank → ranked evidence
+# with citations) and can fall back to the human-readable rag_search.
+# No cluster tools: this agent only retrieves from the knowledge base.
+_RAG_TOOL_NAMES = frozenset({
+    "rag_evidence",
+    "rag_search",
+})
+RAG_TOOLS: list = [
+    t for t in ALLOWED_TOOLS if t.name in _RAG_TOOL_NAMES
+]
+"""The RAG Agent's dedicated toolset — ranked evidence retrieval with
+citations (rag_evidence) plus the legacy formatted search (rag_search)."""
 
 
 # ─────────────────────────────────────────────────────────────
@@ -220,6 +243,57 @@ You have access to:
 2. Cite specific file paths and line numbers from search results.
 3. If the knowledge base doesn't have the answer, say so honestly.
 4. You may also use kubectl_get or other tools if the question involves live state."""
+
+
+# ─────────────────────────────────────────────────────────────
+# Specialist system prompt: RAG Agent (T3.4)
+# ─────────────────────────────────────────────────────────────
+RAG_SYSTEM_PROMPT = """You are the Sentinel **RAG Agent** — a retrieval
+specialist over the Sentinel knowledge base (source code, docs, runbooks,
+past incidents).
+
+Your ONLY job is to retrieve **ranked evidence with citations**.  You do
+NOT write free-text answers — you return evidence, ranked by relevance,
+that other agents can cite.
+
+## Tools you may call
+- **rag_evidence**: Run the full Phase 1 retrieval pipeline (hybrid
+  dense + sparse retrieval, cross-encoder re-ranking) and return
+  structured JSON evidence: ``path``, ``lines``, ``score``,
+  ``source_type``, ``snippet`` per record.
+- **rag_search**: Legacy formatted search — human-readable result list
+  with ``[N] path:line_start-line_end (score, type)`` markers.
+
+## Workflow you should follow
+1. Start with **rag_evidence(query, top_k=5)** — it gives the ranked,
+   scored evidence the graph needs.
+2. If rag_evidence returns nothing useful, try **rag_search** with a
+   reworded query.
+3. Refine the query up to 2-3 times if the first attempt returns
+   irrelevant results.
+
+## Output format
+Return ONLY the evidence, ranked best-first:
+
+```
+Evidence:
+1. [path:line_start-line_end] (score: X.XX, type: source_type)
+   snippet…
+2. [path:line_start-line_end] (score: X.XX, type: source_type)
+   snippet…
+```
+
+Use the exact ``[path:lines]`` citation markers so downstream agents and
+the frontend can link every claim to its source.
+
+## Rules
+1. **Never** answer from memory — always retrieve first.
+2. **Never** include free text beyond the evidence list and a one-line
+   summary of what was found.
+3. If the knowledge base has no relevant content, say "No evidence
+   found for: <query>" — do not fabricate sources.
+4. The evidence you return is published to the graph state, so other
+   specialists (SRE, Security, Cost) can consume your citations."""
 
 
 # ─────────────────────────────────────────────────────────────
@@ -516,25 +590,27 @@ def security_agent_node(state: AgentState) -> dict[str, Any]:
 
 
 # ─────────────────────────────────────────────────────────────
-# Router: Triage → Specialist (T3.1, updated T3.2, T3.3)
+# Router: Triage → Specialist (T3.1, updated T3.2, T3.3, T3.4)
 # ─────────────────────────────────────────────────────────────
-def route_to_specialist(state: AgentState) -> Literal["sre_agent", "security_agent", "cost_agent", "__end__"]:
+def route_to_specialist(
+    state: AgentState,
+) -> Literal["sre_agent", "security_agent", "cost_agent", "rag_agent", "__end__"]:
     """Route to the right specialist based on the triage classification.
 
-    T3.1: ``sre`` / ``knowledge`` / ``general`` → ``sre_agent`` (which
-    adapts its system prompt based on ``routing``).
+    T3.1: ``sre`` / ``general`` → ``sre_agent``.
     T3.2: ``security`` → dedicated :func:`security_agent_node`.
     T3.3: ``cost`` → dedicated :func:`cost_agent_node`.
+    T3.4: ``knowledge`` → dedicated :func:`rag_agent_node` (retrieval
+    specialist returning ranked evidence + citations).
     """
     routing = state.get("routing", "general")
     if routing == "security":
         return "security_agent"
     if routing == "cost":
         return "cost_agent"
-    if routing in ("sre", "knowledge", "general"):
-        return "sre_agent"
-    return "__end__"
-    if routing in ("sre", "knowledge", "general"):
+    if routing == "knowledge":
+        return "rag_agent"
+    if routing in ("sre", "general"):
         return "sre_agent"
     return "__end__"
 
@@ -632,7 +708,110 @@ def should_continue_cost(state: AgentState) -> Literal["cost_tools", "__end__"]:
 
 
 # ─────────────────────────────────────────────────────────────
-# Graph builder (updated T3.1, T3.2, T3.3)
+# Node: RAG Agent (T3.4)
+# ─────────────────────────────────────────────────────────────
+def _extract_evidence(messages: list) -> list[dict[str, Any]]:
+    """Parse rag_evidence ToolMessages into structured evidence records.
+
+    The rag_evidence tool returns JSON::
+
+        {"query": "...", "evidence": [{"path": ..., "lines": ...,
+        "score": ..., "source_type": ..., "snippet": ...}, ...]}
+
+    This helper extracts those records so they can be published to
+    ``scratchpad["evidence"]`` — the shared-state channel through which
+    other agents (SRE, Security, Cost) receive evidence with citations.
+
+    Returns a deduplicated list of evidence dicts (ordered by score,
+    best first).
+    """
+    records: dict[tuple[str, str], dict[str, Any]] = {}
+    for m in messages:
+        if not isinstance(m, ToolMessage):
+            continue
+        if getattr(m, "name", "") != "rag_evidence":
+            continue
+        content = m.content if hasattr(m, "content") else str(m)
+        try:
+            payload = json.loads(content)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        for ev in payload.get("evidence", []):
+            if not isinstance(ev, dict):
+                continue
+            path = ev.get("path", "")
+            lines = ev.get("lines", "")
+            if not path or not lines:
+                continue
+            records[(path, lines)] = {
+                "path": path,
+                "lines": lines,
+                "score": ev.get("score", 0.0),
+                "source_type": ev.get("source_type", ""),
+                "snippet": ev.get("snippet", "")[:300],
+            }
+    return sorted(records.values(), key=lambda r: float(r["score"]), reverse=True)
+
+
+def rag_agent_node(state: AgentState) -> dict[str, Any]:
+    """The RAG Agent: retrieval specialist returning ranked evidence.
+
+    Prepends the :data:`RAG_SYSTEM_PROMPT`, binds *only* the
+    :data:`RAG_TOOLS` subset (rag_evidence + rag_search), and lets the
+    LLM drive a tool loop to gather ranked evidence with citations.
+
+    After each pass the node extracts evidence from any
+    ``rag_evidence`` ToolMessages in the conversation and publishes it
+    to ``scratchpad["evidence"]`` — the shared graph state — so other
+    specialists receive evidence with citations via the graph.
+
+    The node mirrors :func:`sre_agent_node` / :func:`security_agent_node`
+    / :func:`cost_agent_node` in shape so the graph wiring is uniform.
+    """
+    llm = _build_llm(temperature=0.0)
+    llm_with_tools = llm.bind_tools(RAG_TOOLS)
+
+    messages = list(state.get("messages", []))
+    if not messages or not isinstance(messages[0], SystemMessage):
+        messages = [SystemMessage(content=RAG_SYSTEM_PROMPT)] + messages
+
+    # Tag the scratchpad so the chat UI / downstream synthesis knows
+    # this branch did the retrieval.
+    sp = dict(state.get("scratchpad", {}))
+    sp["rag_agent_visited"] = True
+    sp["triage_category"] = state.get("routing", "knowledge")
+
+    # Publish evidence (with citations) into the shared state.
+    evidence = _extract_evidence(state.get("messages", []))
+    if evidence:
+        sp["evidence"] = evidence
+
+    response: AIMessage = llm_with_tools.invoke(messages)
+
+    result: dict[str, Any] = {"messages": [response], "scratchpad": sp}
+    if response.tool_calls:
+        result["tool_calls"] = response.tool_calls
+    return result
+
+
+def should_continue_rag(state: AgentState) -> Literal["rag_tools", "__end__"]:
+    """Route to the RAG tool node if the last message has tool calls.
+
+    Identical logic to :func:`should_continue` but routes to the
+    dedicated ``rag_tools`` ToolNode (bound to :data:`RAG_TOOLS`).
+    """
+    messages = state.get("messages", [])
+    if not messages:
+        return "__end__"
+
+    last = messages[-1]
+    if isinstance(last, AIMessage) and last.tool_calls:
+        return "rag_tools"
+    return "__end__"
+
+
+# ─────────────────────────────────────────────────────────────
+# Graph builder (updated T3.1, T3.2, T3.3, T3.4)
 # ─────────────────────────────────────────────────────────────
 def build_graph() -> StateGraph:
     """Build and compile the multi-agent StateGraph.
@@ -649,6 +828,11 @@ def build_graph() -> StateGraph:
     :func:`cost_agent_node` with its own ``cost_tools`` ToolNode
     bound to the cost tool subset.
 
+    T3.4: A ``knowledge`` classification now routes to a dedicated
+    :func:`rag_agent_node` with its own ``rag_tools`` ToolNode
+    bound to the RAG tool subset.  Evidence with citations is
+    published to ``scratchpad["evidence"]`` for other agents.
+
     Returns a compiled graph that is ready to ``invoke()``.
     """
     builder = StateGraph(AgentState)
@@ -663,6 +847,9 @@ def build_graph() -> StateGraph:
     # T3.3
     builder.add_node("cost_agent", cost_agent_node)
     builder.add_node("cost_tools", ToolNode(COST_TOOLS))
+    # T3.4
+    builder.add_node("rag_agent", rag_agent_node)
+    builder.add_node("rag_tools", ToolNode(RAG_TOOLS))
 
     # Edges — triage first
     builder.set_entry_point("triage_agent")
@@ -673,6 +860,7 @@ def build_graph() -> StateGraph:
             "sre_agent": "sre_agent",
             "security_agent": "security_agent",
             "cost_agent": "cost_agent",
+            "rag_agent": "rag_agent",
             "__end__": END,
         },
     )
@@ -700,6 +888,14 @@ def build_graph() -> StateGraph:
         {"cost_tools": "cost_tools", "__end__": END},
     )
     builder.add_edge("cost_tools", "cost_agent")
+
+    # Edges — RAG tool loop (T3.4)
+    builder.add_conditional_edges(
+        "rag_agent",
+        should_continue_rag,
+        {"rag_tools": "rag_tools", "__end__": END},
+    )
+    builder.add_edge("rag_tools", "rag_agent")
 
     return builder.compile()
 

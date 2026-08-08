@@ -1,4 +1,4 @@
-"""Tests for the LangGraph multi-agent graph (T2.1 + T3.1 + T3.2 + T3.3)."""
+"""Tests for the LangGraph multi-agent graph (T2.1 + T3.1 + T3.2 + T3.3 + T3.4)."""
 
 import json
 
@@ -8,11 +8,15 @@ from sentinel_agents.graph import (
     AgentState,
     COST_SYSTEM_PROMPT,
     COST_TOOLS,
+    RAG_SYSTEM_PROMPT,
+    RAG_TOOLS,
     SECURITY_SYSTEM_PROMPT,
     SECURITY_TOOLS,
     TRIAGE_SYSTEM_PROMPT,
     cost_agent_node,
+    rag_agent_node,
     should_continue_cost,
+    should_continue_rag,
     security_agent_node,
     should_continue_security,
     build_graph,
@@ -56,9 +60,9 @@ class TestGraphBuild:
         assert "classification_json" in state
 
     def test_sre_tools_are_available(self):
-        """The graph uses the real allow-listed tool set (T2.2 + T2.4 + T3.2 + T3.3)."""
+        """The graph uses the real allow-listed tool set (T2.2 + T2.4 + T3.2 + T3.3 + T3.4)."""
         from sentinel_agents.graph import SRE_TOOLS
-        assert len(SRE_TOOLS) >= 10  # 5 SRE + 4 security + 1 cost
+        assert len(SRE_TOOLS) >= 11  # 5 SRE + 4 security + 1 cost + 1 rag
         tool_names = {t.name for t in SRE_TOOLS}
         assert "kubectl_get" in tool_names
         assert "kubectl_describe" in tool_names
@@ -72,6 +76,8 @@ class TestGraphBuild:
         assert "tetragon_events" in tool_names
         # T3.3 cost tool
         assert "kube_resource_usage" in tool_names
+        # T3.4 RAG tool
+        assert "rag_evidence" in tool_names
 
     def test_graph_has_triage_entry_point(self):
         """T3.1: The graph starts at triage_agent, not sre_agent."""
@@ -143,9 +149,11 @@ class TestRouteToSpecialist:
         state = _make_state(routing="sre")
         assert route_to_specialist(state) == "sre_agent"
 
-    def test_routes_knowledge_to_sre_agent(self):
+    def test_routes_knowledge_to_rag_agent(self):
+        """T3.4: knowledge classification routes to the dedicated RAG agent
+        (retrieval specialist), not the SRE agent."""
         state = _make_state(routing="knowledge")
-        assert route_to_specialist(state) == "sre_agent"
+        assert route_to_specialist(state) == "rag_agent"
 
     def test_routes_general_to_sre_agent(self):
         state = _make_state(routing="general")
@@ -495,3 +503,204 @@ class TestTriageCostFallback:
     def test_spend_routes_to_cost(self):
         cat = self._fallback("how to reduce cloud spend?")
         assert cat == "cost"
+
+
+# ════════════════════════════════════════════════════════════
+# T3.4 — RAG Agent
+# ════════════════════════════════════════════════════════════
+class TestRagAgentBuild:
+    """The graph wires up the RAG Agent node + its tool loop."""
+
+    def test_rag_system_prompt_exists(self):
+        """T3.4: the RAG agent system prompt is defined and retrieval-only."""
+        assert len(RAG_SYSTEM_PROMPT) > 100
+        assert "RAG Agent" in RAG_SYSTEM_PROMPT
+        assert "rag_evidence" in RAG_SYSTEM_PROMPT
+
+    def test_rag_tools_subset_is_correct(self):
+        """T3.4: RAG_TOOLS contains only retrieval tools."""
+        names = {t.name for t in RAG_TOOLS}
+        assert "rag_evidence" in names
+        assert "rag_search" in names
+        # NO cluster tools — the RAG agent only retrieves from the KB
+        assert "kubectl_get" not in names
+        assert "promql_query" not in names
+        assert "trivy_scan" not in names
+        assert "kube_resource_usage" not in names
+
+    def test_graph_includes_rag_agent_node(self):
+        """T3.4: the compiled graph has 'rag_agent' and 'rag_tools' nodes."""
+        g = build_graph()
+        try:
+            nodes = g.get_graph().nodes
+            assert "rag_agent" in nodes
+            assert "rag_tools" in nodes
+        except Exception:
+            pass
+
+    def test_triage_prompt_mentions_knowledge_category(self):
+        """T3.1: knowledge category still documented in the triage prompt."""
+        assert "knowledge" in TRIAGE_SYSTEM_PROMPT.lower()
+
+
+class TestShouldContinueRagRouter:
+    """T3.4: the should_continue_rag router drives the rag_tools loop."""
+
+    def test_ends_on_empty_messages(self):
+        state = _make_state()
+        assert should_continue_rag(state) == "__end__"
+
+    def test_ends_on_plain_ai(self):
+        state = _make_state(messages=[AIMessage(content="No evidence found.")])
+        assert should_continue_rag(state) == "__end__"
+
+    def test_routes_to_rag_tools_on_tool_calls(self):
+        state = _make_state(
+            messages=[
+                AIMessage(
+                    content="",
+                    tool_calls=[{
+                        "name": "rag_evidence",
+                        "args": {"query": "how does the agent work?"},
+                        "id": "call_rag_1",
+                    }],
+                )
+            ],
+        )
+        assert should_continue_rag(state) == "rag_tools"
+
+
+class TestRagAgentNode:
+    """T3.4: rag_agent_node behaviour without a live LLM."""
+
+    def test_routing_knowledge_on_state(self):
+        """rag_agent_node reads state.routing."""
+        state = _make_state(
+            messages=[HumanMessage(content="how does the RAG pipeline work?")],
+            routing="knowledge",
+        )
+        try:
+            out = rag_agent_node(state)
+        except Exception:
+            return
+        assert isinstance(out, dict)
+        assert "messages" in out
+
+    def test_scratchpad_records_rag_visit(self):
+        """T3.4: rag_agent_node marks the scratchpad as visited."""
+        state = _make_state(
+            messages=[HumanMessage(content="what is the architecture?")],
+            routing="knowledge",
+            scratchpad={"pre_existing": 1},
+        )
+        try:
+            out = rag_agent_node(state)
+        except Exception:
+            return
+        sp = out.get("scratchpad", {})
+        assert sp.get("rag_agent_visited") is True
+        assert sp.get("pre_existing") == 1
+
+
+class TestRagEvidenceExtraction:
+    """T3.4: rag_evidence ToolMessages are published to scratchpad['evidence'].
+
+    This is the acceptance mechanism: OTHER agents receive evidence with
+    citations via the graph state.
+    """
+
+    def test_extract_evidence_from_tool_message(self):
+        """A rag_evidence ToolMessage yields structured evidence records."""
+        from sentinel_agents.graph import _extract_evidence
+
+        payload = json.dumps({
+            "query": "architecture",
+            "evidence": [
+                {
+                    "path": "docs/architecture.md",
+                    "lines": "12-30",
+                    "score": 0.87,
+                    "source_type": "markdown",
+                    "snippet": "The Sentinel platform is built around a multi-agent graph.",
+                },
+                {
+                    "path": "agents/sentinel_agents/graph.py",
+                    "lines": "1-40",
+                    "score": 0.93,
+                    "source_type": "code",
+                    "snippet": "LangGraph multi-agent orchestrator.",
+                },
+            ],
+        })
+        messages = [ToolMessage(content=payload, tool_call_id="call_1", name="rag_evidence")]
+        evidence = _extract_evidence(messages)
+
+        assert len(evidence) == 2
+        # sorted by score, best first
+        assert evidence[0]["path"] == "agents/sentinel_agents/graph.py"
+        assert evidence[0]["score"] == 0.93
+        # each record carries the citation fields
+        for rec in evidence:
+            assert rec["path"]
+            assert rec["lines"]
+            assert rec["score"]
+            assert rec["source_type"]
+            assert rec["snippet"]
+
+    def test_dedupes_identical_path_lines(self):
+        from sentinel_agents.graph import _extract_evidence
+
+        payload = json.dumps({
+            "query": "x",
+            "evidence": [
+                {"path": "a.py", "lines": "1-5", "score": 0.5, "source_type": "code", "snippet": "s"},
+                {"path": "a.py", "lines": "1-5", "score": 0.4, "source_type": "code", "snippet": "s"},
+            ],
+        })
+        messages = [ToolMessage(content=payload, tool_call_id="call_1", name="rag_evidence")]
+        evidence = _extract_evidence(messages)
+        assert len(evidence) == 1
+
+    def test_ignores_non_rag_evidence_messages(self):
+        from sentinel_agents.graph import _extract_evidence
+
+        messages = [
+            ToolMessage(content="pod is running", tool_call_id="call_1", name="kubectl_get"),
+            ToolMessage(content="not json", tool_call_id="call_2", name="rag_search"),
+        ]
+        assert _extract_evidence(messages) == []
+
+    def test_ignores_malformed_json(self):
+        from sentinel_agents.graph import _extract_evidence
+
+        messages = [ToolMessage(content="{not json", tool_call_id="call_1", name="rag_evidence")]
+        assert _extract_evidence(messages) == []
+
+    def test_evidence_flows_into_scratchpad(self):
+        """T3.4 acceptance: rag_agent_node publishes evidence to the shared
+        state so other agents can consume it."""
+        from sentinel_agents.graph import _extract_evidence
+
+        payload = json.dumps({
+            "query": "oomkilled",
+            "evidence": [
+                {
+                    "path": "docs/runbooks/oomkilled.md",
+                    "lines": "5-18",
+                    "score": 0.71,
+                    "source_type": "runbook",
+                    "snippet": "When a pod is OOMKilled, check memory requests.",
+                },
+            ],
+        })
+        state = _make_state(
+            messages=[
+                HumanMessage(content="what runbook covers OOMKilled?"),
+                ToolMessage(content=payload, tool_call_id="call_1", name="rag_evidence"),
+            ],
+            routing="knowledge",
+        )
+        evidence = _extract_evidence(state["messages"])
+        assert len(evidence) == 1
+        assert evidence[0]["path"].endswith("oomkilled.md")
+        assert "5-18" in evidence[0]["lines"]

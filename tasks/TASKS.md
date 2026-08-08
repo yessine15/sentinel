@@ -362,11 +362,24 @@ the safe execution bridge.
   - Done when: agent identifies an idle/over-provisioned resource and
     proposes a concrete change (Terraform HCL snippet in stub output).
 
-- [ ] **T3.4 RAG Agent (as a proper agent)**
+- [x] **T3.4 RAG Agent (as a proper agent)**
   - Goal: dedicated retrieval agent returning ranked evidence + citations.
   - Steps: wraps the Phase 1 retrieval pipeline into an agent; returns only
     cited evidence, never free text.
   - Done when: other agents receive evidence with citations via the graph.
+  - Implemented: new tool `rag_evidence.py` (hybrid retrieve + cross-encoder
+    rerank → structured JSON evidence records: path, lines, score,
+    source_type, snippet; stub returns deterministic fake evidence with
+    citations); dedicated `rag_agent_node` with `RAG_TOOLS` subset
+    (rag_evidence + rag_search), `rag_tools` ToolNode + `should_continue_rag`
+    router; `knowledge` classification now routes to `rag_agent` (not
+    sre_agent); `RAG_SYSTEM_PROMPT` (retrieval-only, output ranked evidence
+    with `[path:lines]` citation markers, never free text); the node
+    extracts evidence from rag_evidence ToolMessages and publishes it to
+    `scratchpad["evidence"]` — the shared-state channel through which other
+    agents receive evidence with citations via the graph; chat WebSocket
+    streams `rag_agent` events + `rag_tools` results and `_extract_rag_sources`
+    parses both rag_search text and rag_evidence JSON formats.
 
 ## M3.2 Orchestrator
 - [ ] **T3.5 Build the LangGraph loop**

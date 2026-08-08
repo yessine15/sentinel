@@ -100,21 +100,50 @@ def _extract_tool_results(messages: list) -> list[dict[str, Any]]:
 def _extract_rag_sources(messages: list) -> list[dict[str, Any]]:
     """Try to parse RAG source citations from ToolMessages.
 
-    The rag_search tool returns formatted text like::
+    Two tool output formats are understood:
+
+    1. ``rag_search`` — formatted text like::
 
         Found 10 document(s) for: "…"
         [1] path:lines (score: …, type: …)
             snippet…
+
+    2. ``rag_evidence`` (T3.4) — structured JSON like::
+
+        {"query": "…", "evidence": [{"path": …, "lines": …,
+        "score": …, "source_type": …, "snippet": …}, …]}
+
+    Returns a flat list of ``{path, lines, snippet}`` dicts.
     """
     sources: list[dict[str, Any]] = []
     for m in messages:
         if not isinstance(m, ToolMessage):
             continue
         name = getattr(m, "name", "")
+        content = m.content if hasattr(m, "content") else str(m)
+
+        # ── rag_evidence: structured JSON (T3.4) ──
+        if name == "rag_evidence":
+            try:
+                payload = json.loads(content)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            for ev in payload.get("evidence", []):
+                if not isinstance(ev, dict):
+                    continue
+                path = ev.get("path", "")
+                lines = ev.get("lines", "")
+                if path and lines:
+                    sources.append({
+                        "path": path.strip(),
+                        "lines": lines.strip(),
+                        "snippet": str(ev.get("snippet", ""))[:300],
+                    })
+            continue
+
         if name != "rag_search":
             continue
-        content = m.content if hasattr(m, "content") else str(m)
-        # Crude parse: extract [N] path:lines entries
+        # ── rag_search: formatted text ──
         for line in content.split("\n"):
             line = line.strip()
             if line.startswith("[") and "]" in line and ":" in line:
@@ -259,7 +288,14 @@ async def _stream_agent(ws: WebSocket, query: str) -> None:
                     chunk["cost_agent"], ws, accumulated_text, seen_tool_call_ids
                 )
 
-            # ── tools / sec_tools / cost_tools node produced output ──
+            # ── rag_agent node produced output (T3.4) ──
+            # Same event shapes as the other specialists.
+            if "rag_agent" in chunk:
+                accumulated_text = await _emit_agent_chunk(
+                    chunk["rag_agent"], ws, accumulated_text, seen_tool_call_ids
+                )
+
+            # ── tools / sec_tools / cost_tools / rag_tools node output ──
             tools_output = None
             if "tools" in chunk:
                 tools_output = chunk["tools"]
@@ -267,6 +303,8 @@ async def _stream_agent(ws: WebSocket, query: str) -> None:
                 tools_output = chunk["sec_tools"]
             elif "cost_tools" in chunk:
                 tools_output = chunk["cost_tools"]
+            elif "rag_tools" in chunk:
+                tools_output = chunk["rag_tools"]
 
             if tools_output is not None:
                 new_messages: list = tools_output.get("messages", [])
