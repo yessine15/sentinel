@@ -5,6 +5,7 @@ Phase 3 (T3.1+): Triage Agent → Specialist routing (SRE, Knowledge).
 Phase 3 (T3.2+): Security Agent specialist with security tooling.
 Phase 3 (T3.3+): Cost Agent specialist with right-sizing suggestions.
 Phase 3 (T3.4+): RAG Agent specialist with ranked evidence + citations.
+Phase 3 (T3.5+): Incident loop — parallel specialists → synthesis → plan → approval.
 """
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"

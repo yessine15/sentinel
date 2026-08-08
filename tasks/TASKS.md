@@ -382,7 +382,7 @@ the safe execution bridge.
     parses both rag_search text and rag_evidence JSON formats.
 
 ## M3.2 Orchestrator
-- [ ] **T3.5 Build the LangGraph loop**
+- [x] **T3.5 Build the LangGraph loop**
   - Goal: alert → triage → [SRE + Security + RAG in parallel] → synthesis →
     plan → approval → executor → postmortem → embed.
   - Steps: define nodes and edges; use parallel fan-out for the three
@@ -390,6 +390,25 @@ the safe execution bridge.
     proposes a remediation plan; an `approval` node blocks for human input.
   - Done when: feeding a test alert drives state through the full graph,
     pausing at approval.
+  - Implemented: new triage `incident` category (prompt + keyword fallback:
+    alert/incident/firing/on-call/sev/crashloop/oomkill/outage, checked
+    FIRST so a security-flavoured alert runs the full loop); `dispatch`
+    node captures the raw incident and fans out to SRE + Security + RAG in
+    PARALLEL (static edges — LangGraph joins at fan-in); the three
+    branch routers (`should_continue*`) return `"synthesis"` when
+    routing == "incident"; `synthesis_node` merges specialist outputs
+    via `SYNTHESIS_SYSTEM_PROMPT` (+ fallback when gateway down);
+    `planner_node` proposes a structured remediation plan
+    ({priority, rationale, steps[]}) via `PLANNER_SYSTEM_PROMPT`
+    (+ draft plan fallback marked draft:true); `approval_node` reads
+    scratchpad["approval_decision"] → approved/rejected/awaiting_approval
+    and persists the plan in scratchpad["pending_plan"] (the T3.5 pause —
+    T3.6 wires the UI/DB resume); `AgentState` gains incident/synthesis/
+    plan/approval_status channels + a scratchpad MERGE reducer so
+    parallel branches keep each other's notes; all four specialist nodes
+    degrade gracefully (error AIMessage instead of crashing) so the loop
+    completes even without a gateway; chat WebSocket streams
+    dispatch/synthesis/plan/approval events.
 
 - [ ] **T3.6 Human-in-the-loop approval**
   - Goal: a gate where a user approves/rejects a plan.

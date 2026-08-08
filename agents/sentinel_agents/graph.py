@@ -10,6 +10,9 @@ T3.3: Cost Agent specialist — kube_resource_usage tool + triage "cost"
 T3.4: RAG Agent specialist — rag_evidence tool wrapping the Phase 1
       retrieval pipeline + triage "knowledge" category + dedicated
       node that publishes evidence to the shared state.
+T3.5: Incident loop — triage "incident" category → parallel fan-out to
+      SRE + Security + RAG specialists → synthesis → planner → approval
+      (pauses awaiting human input).
 
 Flow:
     START → triage_agent → route_to_specialist
@@ -30,11 +33,20 @@ Flow:
                                 │                 sec_tools ←────────┘
                                 │                   ↓
                                 │                security_agent → END
-                                └── "cost"      → cost_agent → [tool calls?]
-                                                      ↓            ↓
-                                                    cost_tools ←───┘
-                                                      ↓
-                                                   cost_agent → END
+                                ├── "cost"      → cost_agent → [tool calls?]
+                                │                   ↓            ↓
+                                │                 cost_tools ←───┘
+                                │                   ↓
+                                │                cost_agent → END
+                                └── "incident"  → dispatch ── (parallel fan-out)
+                                                     ├── sre_agent ──────┐
+                                                     ├── security_agent ─┼─→ synthesis
+                                                     └── rag_agent ──────┘     ↓
+                                                                          planner
+                                                                             ↓
+                                                                          approval
+                                                                             ↓
+                                                                          END (awaiting)
 """
 
 from __future__ import annotations
@@ -55,6 +67,20 @@ from sentinel_agents.tools import ALLOWED_TOOLS
 # ─────────────────────────────────────────────────────────────
 # State
 # ─────────────────────────────────────────────────────────────
+def _merge_scratchpad(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+    """Merge two scratchpad dicts instead of replacing (T3.5).
+
+    In the incident loop the SRE / Security / RAG specialists run in
+    parallel — each writes its own scratchpad keys (``*_visited``,
+    ``evidence``, …).  Without a reducer, the last writer would wipe
+    the other branches' notes.  A shallow merge keeps every branch's
+    contribution while later writes still win per-key.
+    """
+    merged = dict(left or {})
+    merged.update(right or {})
+    return merged
+
+
 class AgentState(TypedDict):
     """Typed state that flows through the multi-agent graph.
 
@@ -65,18 +91,33 @@ class AgentState(TypedDict):
             AIMessage.  Cleared once the tool node has executed them.
         scratchpad: Arbitrary working memory the agent can read and
             write across turns (e.g. collected evidence, intermediate
-            reasoning).
+            reasoning).  Merged (not replaced) so parallel branches can
+            each contribute — see :func:`_merge_scratchpad`.
         routing: The triage classification result (``sre``, ``knowledge``,
-            ``general``, or ``security`` — set by the triage node).
+            ``general``, ``security``, ``cost``, or ``incident`` — set by
+            the triage node).
         classification_json: Raw JSON string from the triage LLM for
             debugging / frontend display.
+        incident: Raw incident/alert text captured by ``dispatch``
+            (T3.5 orchestration loop).
+        synthesis: Merged specialist assessment produced by
+            ``synthesis`` (T3.5).
+        plan: Structured remediation plan proposed by ``planner``
+            (T3.5).
+        approval_status: ``"awaiting_approval"`` / ``"approved"`` /
+            ``"rejected"`` — set by ``approval`` (T3.5).
     """
 
     messages: Annotated[list[BaseMessage], add_messages]
     tool_calls: list[dict[str, Any]]
-    scratchpad: dict[str, Any]
+    scratchpad: Annotated[dict[str, Any], _merge_scratchpad]
     routing: str
     classification_json: str
+    # ── T3.5 orchestration channels ──
+    incident: str
+    synthesis: str
+    plan: dict[str, Any]
+    approval_status: str
 
 
 # ─────────────────────────────────────────────────────────────
@@ -203,12 +244,19 @@ Pick EXACTLY ONE:
   agent work?", "what is the RAG pipeline?", "explain the tool allow-list".
   These are answered from the knowledge base (vector DB with source code + docs).
 
+- **incident**: The user pasted or described a live incident or alert — a
+  Prometheus alert payload, an OOMKilled/crash-looping pod, an on-call page,
+  an outage, or "something is down".  Examples: "ALERTS: [1] kube_pod_oom ...",
+  "our api pod is crash-looping and the page is on fire", "SEV2: high error
+  rate on /ping", "incident: postgres is down".  These run the full incident
+  loop: SRE + Security + RAG in parallel → synthesis → plan → approval.
+
 - **general**: Greetings ("hello", "hi"), chit-chat, thank-yous, or anything
   that doesn't fit the above categories.
 
 ## Output format (JSON only, no markdown fences)
 
-{"category": "<sre|security|cost|knowledge|general>", "reasoning": "<one short sentence>", "refined_query": "<the user query, optionally clarified>"}"""
+{"category": "<sre|security|cost|knowledge|incident|general>", "reasoning": "<one short sentence>", "refined_query": "<the user query, optionally clarified>"}"""
 
 
 # ─────────────────────────────────────────────────────────────
@@ -447,7 +495,7 @@ def triage_agent_node(state: AgentState) -> dict[str, Any]:
         classification = json.loads(raw)
         category = classification.get("category", "general").lower().strip()
         # Validate category
-        if category not in ("sre", "knowledge", "general", "security", "cost"):
+        if category not in ("sre", "knowledge", "general", "security", "cost", "incident"):
             category = "general"
 
         return {
@@ -468,9 +516,20 @@ def triage_agent_node(state: AgentState) -> dict[str, Any]:
                 last_user = (m.content or "").lower()
                 break
 
-        # T3.2: security keywords are checked FIRST so that a query that
-        # mentions both a pod and a security signal (e.g. "suspicious exec in
-        # this pod") routes to the Security Agent, not the SRE Agent.
+        # T3.5: incident keywords are checked FIRST — an alert payload
+        # mentioning security ("crypto miner alert") must run the full
+        # incident loop (which includes the Security specialist), not
+        # short-circuit to a single agent.
+        incident_keywords = (
+            "alert", "alerts", "incident", "firing", "on-call", "oncall",
+            "pager", "pagerduty", "page received", "sev1", "sev2", "sev 1",
+            "sev 2", "severity 1", "severity 2", "crashloop", "crash loop",
+            "oomkill", "oom killed", "outage", "downtime",
+            "production issue", "is down", "is crashing", "just went down",
+        )
+        # T3.2: security keywords are checked before SRE/cost so that a
+        # query that mentions both a pod and a security signal (e.g.
+        # "suspicious exec in this pod") routes to the Security Agent.
         security_keywords = (
             "suspicious", "exec in", "shell in", "shell spawned",
             "shell was", "shell run", "spawn shell", "spawned shell",
@@ -481,7 +540,9 @@ def triage_agent_node(state: AgentState) -> dict[str, Any]:
             "reverse shell", "security incident",
             "compromis", "hardening",
         )
-        if any(kw in last_user for kw in security_keywords):
+        if any(kw in last_user for kw in incident_keywords):
+            category = "incident"
+        elif any(kw in last_user for kw in security_keywords):
             category = "security"
         # T3.3: cost keywords — queries about right-sizing, waste, idle
         # resources, or cloud spend.  Checked before SRE so that "which
@@ -543,7 +604,19 @@ def sre_agent_node(state: AgentState) -> dict[str, Any]:
     if not messages or not isinstance(messages[0], SystemMessage):
         messages = [SystemMessage(content=system_prompt)] + messages
 
-    response: AIMessage = llm_with_tools.invoke(messages)
+    # T3.5: degrade gracefully — if the LLM gateway is unreachable the
+    # node reports the failure instead of crashing the whole graph, so
+    # the incident loop can still reach synthesis/planner/approval.
+    try:
+        response: AIMessage = llm_with_tools.invoke(messages)
+    except Exception as exc:
+        response = AIMessage(
+            content=(
+                "⚠️ SRE Agent could not reach the LLM gateway "
+                f"({type(exc).__name__}: {exc}). No live-cluster findings "
+                "produced."
+            )
+        )
 
     result: dict[str, Any] = {"messages": [response]}
 
@@ -581,7 +654,16 @@ def security_agent_node(state: AgentState) -> dict[str, Any]:
     sp["security_agent_visited"] = True
     sp["triage_category"] = state.get("routing", "security")
 
-    response: AIMessage = llm_with_tools.invoke(messages)
+    # T3.5: degrade gracefully if the LLM gateway is unreachable.
+    try:
+        response: AIMessage = llm_with_tools.invoke(messages)
+    except Exception as exc:
+        response = AIMessage(
+            content=(
+                "⚠️ Security Agent could not reach the LLM gateway "
+                f"({type(exc).__name__}: {exc}). No security findings produced."
+            )
+        )
 
     result: dict[str, Any] = {"messages": [response], "scratchpad": sp}
     if response.tool_calls:
@@ -590,11 +672,11 @@ def security_agent_node(state: AgentState) -> dict[str, Any]:
 
 
 # ─────────────────────────────────────────────────────────────
-# Router: Triage → Specialist (T3.1, updated T3.2, T3.3, T3.4)
+# Router: Triage → Specialist (T3.1, updated T3.2, T3.3, T3.4, T3.5)
 # ─────────────────────────────────────────────────────────────
 def route_to_specialist(
     state: AgentState,
-) -> Literal["sre_agent", "security_agent", "cost_agent", "rag_agent", "__end__"]:
+) -> Literal["sre_agent", "security_agent", "cost_agent", "rag_agent", "dispatch", "__end__"]:
     """Route to the right specialist based on the triage classification.
 
     T3.1: ``sre`` / ``general`` → ``sre_agent``.
@@ -602,6 +684,8 @@ def route_to_specialist(
     T3.3: ``cost`` → dedicated :func:`cost_agent_node`.
     T3.4: ``knowledge`` → dedicated :func:`rag_agent_node` (retrieval
     specialist returning ranked evidence + citations).
+    T3.5: ``incident`` → ``dispatch`` (parallel fan-out to SRE +
+    Security + RAG, then synthesis → planner → approval).
     """
     routing = state.get("routing", "general")
     if routing == "security":
@@ -610,19 +694,25 @@ def route_to_specialist(
         return "cost_agent"
     if routing == "knowledge":
         return "rag_agent"
+    if routing == "incident":
+        return "dispatch"
     if routing in ("sre", "general"):
         return "sre_agent"
     return "__end__"
 
 
 # ─────────────────────────────────────────────────────────────
-# Router: tool loop (T2.1, extended T3.2)
+# Router: tool loop (T2.1, extended T3.2, T3.5)
 # ─────────────────────────────────────────────────────────────
-def should_continue(state: AgentState) -> Literal["tools", "__end__"]:
+def should_continue(state: AgentState) -> Literal["tools", "synthesis", "__end__"]:
     """Route to the tool node if the last message has pending tool calls.
 
     Used by the SRE agent node — routes tool calls through the shared
     ``tools`` ToolNode (bound to :data:`SRE_TOOLS`).
+
+    T3.5: when running inside the incident loop (``routing ==
+    "incident"``), a finished branch continues to ``synthesis`` so the
+    parallel fan-out can be joined.
     """
     messages = state.get("messages", [])
     if not messages:
@@ -631,15 +721,20 @@ def should_continue(state: AgentState) -> Literal["tools", "__end__"]:
     last = messages[-1]
     if isinstance(last, AIMessage) and last.tool_calls:
         return "tools"
+    if state.get("routing") == "incident":
+        return "synthesis"
     return "__end__"
 
 
-def should_continue_security(state: AgentState) -> Literal["sec_tools", "__end__"]:
+def should_continue_security(state: AgentState) -> Literal["sec_tools", "synthesis", "__end__"]:
     """Route to the security tool node if the last message has tool calls.
 
     Identical logic to :func:`should_continue` but routes to the dedicated
     ``sec_tools`` ToolNode (bound to :data:`SECURITY_TOOLS`) so a security
     agent tool call lands on the right executor.
+
+    T3.5: inside the incident loop a finished branch continues to
+    ``synthesis``.
     """
     messages = state.get("messages", [])
     if not messages:
@@ -648,6 +743,8 @@ def should_continue_security(state: AgentState) -> Literal["sec_tools", "__end__
     last = messages[-1]
     if isinstance(last, AIMessage) and last.tool_calls:
         return "sec_tools"
+    if state.get("routing") == "incident":
+        return "synthesis"
     return "__end__"
 
 
@@ -681,7 +778,16 @@ def cost_agent_node(state: AgentState) -> dict[str, Any]:
     sp["cost_agent_visited"] = True
     sp["triage_category"] = state.get("routing", "cost")
 
-    response: AIMessage = llm_with_tools.invoke(messages)
+    # T3.5: degrade gracefully if the LLM gateway is unreachable.
+    try:
+        response: AIMessage = llm_with_tools.invoke(messages)
+    except Exception as exc:
+        response = AIMessage(
+            content=(
+                "⚠️ Cost Agent could not reach the LLM gateway "
+                f"({type(exc).__name__}: {exc}). No cost findings produced."
+            )
+        )
 
     result: dict[str, Any] = {"messages": [response], "scratchpad": sp}
     if response.tool_calls:
@@ -786,7 +892,16 @@ def rag_agent_node(state: AgentState) -> dict[str, Any]:
     if evidence:
         sp["evidence"] = evidence
 
-    response: AIMessage = llm_with_tools.invoke(messages)
+    # T3.5: degrade gracefully if the LLM gateway is unreachable.
+    try:
+        response: AIMessage = llm_with_tools.invoke(messages)
+    except Exception as exc:
+        response = AIMessage(
+            content=(
+                "⚠️ RAG Agent could not reach the LLM gateway "
+                f"({type(exc).__name__}: {exc}). No evidence summary produced."
+            )
+        )
 
     result: dict[str, Any] = {"messages": [response], "scratchpad": sp}
     if response.tool_calls:
@@ -794,11 +909,14 @@ def rag_agent_node(state: AgentState) -> dict[str, Any]:
     return result
 
 
-def should_continue_rag(state: AgentState) -> Literal["rag_tools", "__end__"]:
+def should_continue_rag(state: AgentState) -> Literal["rag_tools", "synthesis", "__end__"]:
     """Route to the RAG tool node if the last message has tool calls.
 
     Identical logic to :func:`should_continue` but routes to the
     dedicated ``rag_tools`` ToolNode (bound to :data:`RAG_TOOLS`).
+
+    T3.5: inside the incident loop a finished branch continues to
+    ``synthesis``.
     """
     messages = state.get("messages", [])
     if not messages:
@@ -807,11 +925,262 @@ def should_continue_rag(state: AgentState) -> Literal["rag_tools", "__end__"]:
     last = messages[-1]
     if isinstance(last, AIMessage) and last.tool_calls:
         return "rag_tools"
+    if state.get("routing") == "incident":
+        return "synthesis"
     return "__end__"
 
 
 # ─────────────────────────────────────────────────────────────
-# Graph builder (updated T3.1, T3.2, T3.3, T3.4)
+# Incident loop (T3.5) — dispatch → specialists (parallel) →
+# synthesis → planner → approval
+# ─────────────────────────────────────────────────────────────
+SYNTHESIS_SYSTEM_PROMPT = """You are the Sentinel **Synthesis Agent** — the
+incident coordinator.
+
+The SRE, Security, and RAG specialists have investigated the incident in
+parallel.  Your job is to merge their findings into ONE coherent incident
+assessment.
+
+## Input
+A transcript of the specialists' findings (may include live-cluster
+observations, security analysis, and cited evidence from the knowledge
+base).  Some specialists may have failed to reach the LLM gateway —
+their messages say so explicitly; work with what you have.
+
+## Output format
+A concise markdown assessment with EXACTLY these sections:
+
+## Incident summary
+<one or two sentences: what is happening, who/what is affected>
+
+## Key findings
+- <finding 1 with the specialist source — e.g. "SRE: api-7d9-abcde
+  CrashLoopBackOff (restarted 12 times)" or "Security: no CVE evidence">
+- <finding 2>
+- <finding 3>
+
+## Evidence cited
+- [path:lines] <one-line snippet>  (only if RAG evidence exists)
+
+## Open questions
+- <what the specialists could not determine — or "none">
+
+## Rules
+1. Never invent findings — only merge what the specialists produced.
+2. Preserve citation markers ([path:lines]) exactly as the RAG agent
+   emitted them.
+3. Do NOT propose remediation — the Planner Agent does that next."""
+
+
+PLANNER_SYSTEM_PROMPT = """You are the Sentinel **Planner Agent** — the
+remediation planner.
+
+You receive the Synthesis Agent's incident assessment and must propose a
+concrete remediation plan.
+
+## Output format
+Output ONLY a valid JSON object (no markdown, no backticks):
+
+{
+  "priority": "high|medium|low",
+  "rationale": "<one or two sentences tying the plan to the findings>",
+  "steps": [
+    {
+      "action": "<imperative verb — e.g. restart, scale, cordon, patch, escalate>",
+      "target": "<what it acts on — e.g. deployment/demo-api, node/kind-worker, CVE-2024-12345>",
+      "detail": "<one sentence: exact change + expected outcome>"
+    }
+  ]
+}
+
+## Rules
+1. Every step must be traceable to a finding from the synthesis — no
+   invented steps.
+2. 1-3 steps max.  Prefer the smallest safe change first (e.g. restart
+   before scale, scale before patch).
+3. If the incident has a security signal (compromise indicators), the
+   FIRST step must be containment (e.g. "cordon the node" or "suspend
+   the workload"), not remediation.
+4. If the synthesis says the LLM gateway was down and no findings are
+   available, return a single step: {"action": "escalate",
+   "target": "human-on-call", "detail": "No specialist findings
+   available — requires manual investigation."}.
+5. Do NOT execute anything — you only propose.  Execution is for the
+   Executor Agent (T3.7) after human approval (T3.6)."""
+
+
+def _collect_specialist_outputs(state: AgentState) -> str:
+    """Gather the specialists' findings into a single text block.
+
+    Takes the last few AIMessages (one per specialist branch) plus any
+    RAG evidence published to the scratchpad, so the Synthesis Agent
+    can merge everything.
+    """
+    lines: list[str] = []
+    ai_msgs = [
+        m for m in state.get("messages", [])
+        if isinstance(m, AIMessage) and m.content
+    ]
+    for i, m in enumerate(ai_msgs[-3:], start=1):
+        text = m.content
+        if isinstance(text, str):
+            lines.append(f"[Specialist {i}]\n{text[:2000]}")
+        else:
+            lines.append(f"[Specialist {i}]\n{str(text)[:2000]}")
+
+    evidence = state.get("scratchpad", {}).get("evidence", [])
+    if evidence:
+        lines.append("[RAG Evidence]")
+        for ev in evidence[:5]:
+            lines.append(
+                f"  {ev.get('path', '?')}:{ev.get('lines', '?')} "
+                f"(score {ev.get('score', 0)}) — {ev.get('snippet', '')[:150]}"
+            )
+
+    return "\n\n".join(lines) if lines else (
+        "No specialist output available — the LLM gateway may be down."
+    )
+
+
+def dispatch_node(state: AgentState) -> dict[str, Any]:
+    """Entry point of the incident loop (T3.5).
+
+    Captures the raw incident text into state and marks the scratchpad
+    so downstream stages and the chat UI know the orchestration loop is
+    running.  The parallel fan-out to SRE / Security / RAG happens via
+    the graph edges from this node.
+    """
+    sp = dict(state.get("scratchpad", {}))
+    sp["orchestration"] = True
+    sp["dispatch_visited"] = True
+
+    incident = ""
+    for m in reversed(state.get("messages", [])):
+        if isinstance(m, HumanMessage):
+            incident = m.content if isinstance(m.content, str) else str(m.content)
+            break
+    sp["incident"] = incident
+    sp["triage_category"] = state.get("routing", "incident")
+
+    return {"incident": incident, "scratchpad": sp}
+
+
+def synthesis_node(state: AgentState) -> dict[str, Any]:
+    """Merge the parallel specialists' findings into one assessment (T3.5).
+
+    Feeds the collected specialist outputs to the LLM; if the gateway
+    is unreachable, falls back to the raw collected text so the loop
+    still progresses (marked ``synthesis_fallback=True``).
+    """
+    sp = dict(state.get("scratchpad", {}))
+    sp["synthesis_visited"] = True
+    sp["triage_category"] = state.get("routing", "incident")
+
+    context = _collect_specialist_outputs(state)
+    try:
+        llm = _build_llm(temperature=0.0)
+        response: AIMessage = llm.invoke(
+            [SystemMessage(content=SYNTHESIS_SYSTEM_PROMPT), HumanMessage(content=context)]
+        )
+        text = response.content if isinstance(response.content, str) else str(response.content)
+    except Exception as exc:
+        text = (
+            f"## Incident summary\nSynthesis fallback — LLM gateway "
+            f"unreachable ({type(exc).__name__}: {exc}).\n\n"
+            f"## Key findings\n{context}"
+        )
+        sp["synthesis_fallback"] = True
+
+    sp["synthesis"] = text
+    return {"synthesis": text, "scratchpad": sp}
+
+
+def planner_node(state: AgentState) -> dict[str, Any]:
+    """Propose a remediation plan from the synthesis (T3.5).
+
+    Asks the LLM for a structured plan (priority, rationale, steps);
+    if the gateway is unreachable, emits a safe draft plan marked
+    ``draft: true`` so the loop still pauses at approval.
+    """
+    sp = dict(state.get("scratchpad", {}))
+    sp["planner_visited"] = True
+    sp["triage_category"] = state.get("routing", "incident")
+
+    synthesis = state.get("synthesis") or sp.get("synthesis", "")
+    try:
+        llm = _build_llm(temperature=0.0)
+        response: AIMessage = llm.invoke(
+            [SystemMessage(content=PLANNER_SYSTEM_PROMPT), HumanMessage(content=synthesis)]
+        )
+        raw = response.content if isinstance(response.content, str) else str(response.content)
+        raw = raw.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[-1] if "\n" in raw else raw[3:]
+            if raw.endswith("```"):
+                raw = raw[:-3]
+            raw = raw.strip()
+        plan = json.loads(raw)
+        if not isinstance(plan, dict) or "steps" not in plan:
+            raise ValueError("plan must be a dict with a 'steps' list")
+        plan.setdefault("draft", False)
+    except Exception as exc:
+        plan = {
+            "priority": "high",
+            "rationale": (
+                f"Draft plan — LLM gateway unreachable ({type(exc).__name__}: "
+                f"{exc}); requires human review before execution."
+            ),
+            "steps": [
+                {
+                    "action": "escalate",
+                    "target": "human-on-call",
+                    "detail": "No specialist findings available — requires "
+                              "manual investigation.",
+                }
+            ],
+            "draft": True,
+        }
+
+    sp["plan"] = plan
+    return {"plan": plan, "scratchpad": sp}
+
+
+def approval_node(state: AgentState) -> dict[str, Any]:
+    """Human-in-the-loop gate (T3.5, wired fully in T3.6).
+
+    Reads ``scratchpad["approval_decision"]``:
+
+    - ``"approved"``  → ``approval_status = "approved"`` (T3.7 executor
+      will consume the plan).
+    - ``"rejected"``  → ``approval_status = "rejected"``.
+    - missing          → ``approval_status = "awaiting_approval"`` —
+      the graph pauses here with the plan persisted in the state,
+      ready for T3.6 to resume it from a UI / DB round-trip.
+
+    The plan is always preserved in ``scratchpad["pending_plan"]`` so
+    the approval UI and the future Executor Agent can read it.
+    """
+    sp = dict(state.get("scratchpad", {}))
+    sp["approval_visited"] = True
+    sp["triage_category"] = state.get("routing", "incident")
+
+    plan = state.get("plan") or sp.get("plan", {})
+    sp["pending_plan"] = plan
+
+    decision = (sp.get("approval_decision") or "").strip().lower()
+    if decision == "approved":
+        status = "approved"
+    elif decision == "rejected":
+        status = "rejected"
+    else:
+        status = "awaiting_approval"
+
+    sp["approval_status"] = status
+    return {"approval_status": status, "scratchpad": sp}
+
+
+# ─────────────────────────────────────────────────────────────
+# Graph builder (updated T3.1, T3.2, T3.3, T3.4, T3.5)
 # ─────────────────────────────────────────────────────────────
 def build_graph() -> StateGraph:
     """Build and compile the multi-agent StateGraph.
@@ -833,6 +1202,12 @@ def build_graph() -> StateGraph:
     bound to the RAG tool subset.  Evidence with citations is
     published to ``scratchpad["evidence"]`` for other agents.
 
+    T3.5: An ``incident`` classification now routes to ``dispatch``,
+    which fans out to the SRE + Security + RAG specialists in
+    PARALLEL; each finished branch joins at ``synthesis`` (merges
+    findings) → ``planner`` (proposes a remediation plan) →
+    ``approval`` (pauses awaiting human input).
+
     Returns a compiled graph that is ready to ``invoke()``.
     """
     builder = StateGraph(AgentState)
@@ -850,6 +1225,11 @@ def build_graph() -> StateGraph:
     # T3.4
     builder.add_node("rag_agent", rag_agent_node)
     builder.add_node("rag_tools", ToolNode(RAG_TOOLS))
+    # T3.5 incident loop
+    builder.add_node("dispatch", dispatch_node)
+    builder.add_node("synthesis", synthesis_node)
+    builder.add_node("planner", planner_node)
+    builder.add_node("approval", approval_node)
 
     # Edges — triage first
     builder.set_entry_point("triage_agent")
@@ -861,6 +1241,7 @@ def build_graph() -> StateGraph:
             "security_agent": "security_agent",
             "cost_agent": "cost_agent",
             "rag_agent": "rag_agent",
+            "dispatch": "dispatch",
             "__end__": END,
         },
     )
@@ -869,7 +1250,7 @@ def build_graph() -> StateGraph:
     builder.add_conditional_edges(
         "sre_agent",
         should_continue,
-        {"tools": "tools", "__end__": END},
+        {"tools": "tools", "synthesis": "synthesis", "__end__": END},
     )
     builder.add_edge("tools", "sre_agent")
 
@@ -877,7 +1258,7 @@ def build_graph() -> StateGraph:
     builder.add_conditional_edges(
         "security_agent",
         should_continue_security,
-        {"sec_tools": "sec_tools", "__end__": END},
+        {"sec_tools": "sec_tools", "synthesis": "synthesis", "__end__": END},
     )
     builder.add_edge("sec_tools", "security_agent")
 
@@ -893,9 +1274,19 @@ def build_graph() -> StateGraph:
     builder.add_conditional_edges(
         "rag_agent",
         should_continue_rag,
-        {"rag_tools": "rag_tools", "__end__": END},
+        {"rag_tools": "rag_tools", "synthesis": "synthesis", "__end__": END},
     )
     builder.add_edge("rag_tools", "rag_agent")
+
+    # Edges — Incident loop (T3.5): parallel fan-out + join
+    builder.add_edge("dispatch", "sre_agent")
+    builder.add_edge("dispatch", "security_agent")
+    builder.add_edge("dispatch", "rag_agent")
+    # synthesis fans IN from all three specialists (LangGraph waits for
+    # every incoming edge to fire before running the node).
+    builder.add_edge("synthesis", "planner")
+    builder.add_edge("planner", "approval")
+    builder.add_edge("approval", END)
 
     return builder.compile()
 

@@ -295,6 +295,37 @@ async def _stream_agent(ws: WebSocket, query: str) -> None:
                     chunk["rag_agent"], ws, accumulated_text, seen_tool_call_ids
                 )
 
+            # ── incident loop nodes produced output (T3.5) ──
+            if "dispatch" in chunk:
+                dispatch_out = chunk["dispatch"]
+                await ws.send_json({
+                    "type": "dispatch",
+                    "specialists": ["sre_agent", "security_agent", "rag_agent"],
+                    "incident": dispatch_out.get("incident", "")[:500],
+                })
+
+            if "synthesis" in chunk:
+                synth_out = chunk["synthesis"]
+                await ws.send_json({
+                    "type": "synthesis",
+                    "text": synth_out.get("synthesis", ""),
+                })
+
+            if "planner" in chunk:
+                plan_out = chunk["planner"]
+                await ws.send_json({
+                    "type": "plan",
+                    "plan": plan_out.get("plan", {}),
+                })
+
+            if "approval" in chunk:
+                approval_out = chunk["approval"]
+                await ws.send_json({
+                    "type": "approval",
+                    "status": approval_out.get("approval_status", "awaiting_approval"),
+                    "plan": approval_out.get("scratchpad", {}).get("pending_plan", {}),
+                })
+
             # ── tools / sec_tools / cost_tools / rag_tools node output ──
             tools_output = None
             if "tools" in chunk:
