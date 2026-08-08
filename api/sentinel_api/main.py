@@ -34,7 +34,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from structlog.processors import JSONRenderer
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 # ── Configure OpenTelemetry tracing ────────────────────────
 OTEL_ENDPOINT = os.environ.get(

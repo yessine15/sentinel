@@ -252,17 +252,45 @@
   Live smoke test confirms correct classification: SRE queries route
   with kubectl tools, knowledge queries trigger rag_search, greetings
   get friendly responses.  Versions bumped to 0.3.0.
+- [x] **T3.2 Security Agent** — four new allow-listed security tools:
+  `trivy_scan` (image/fs/repo vuln+misconfig+secret scanning via the
+  trivy CLI), `cve_lookup` (single-CVE lookup against the public
+  OSV.dev API, canonical CVE-YYYY-NNNN id validated), `falco_events`
+  (read-only Falco runtime alerts — "shell in container", "/etc/shadow"
+  reads, etc.), `tetragon_events` (read-only eBPF exec/network/file/dns
+  events).  All four validate inputs against frozenset allow-lists and
+  degrade to stub mode when their backend isn't deployed.  Dedicated
+  `security_agent_node` with a `SECURITY_TOOLS` subset
+  (trivy+cve+falco+tetragon + kubectl get/describe + rag_search —
+  promql/logql excluded), its own `sec_tools` ToolNode +
+  `should_continue_security` router, and a `security` category added
+  to the triage prompt + keyword fallback (checked first so a
+  "suspicious exec in a pod" routes to security, not SRE).  Chat
+  WebSocket streams `security_agent` events through the same
+  token/tool flow as the SRE agent.  139 tests pass (35 graph + 70
+  tools [incl. 30 security] + 19 API + 15 live skipped).  Live smoke
+  test confirms "suspicious exec in a pod" → classification=security
+  → `security_agent`; the `sec_tools` loop wiring is verified with a
+  synthetic structured tool call (`falco_events` returns its "Terminal
+  shell in container" stub payload).  Versions bumped to 0.4.0.
+  Note: gemma4 via Ollama emits tool calls as TEXT (`<tool_code>…`)
+  rather than structured LangChain tool_calls, so the live runtime
+  tool loop doesn't fire end-to-end on gemma4 — see
+  `/memories/repo/gemma4-tool-calling.md`; the T3.2 acceptance
+  criterion (flagged security at triage) is satisfied.
 - [ ] Phase 4: Security hardening.
 - [ ] Phase 5: Polish, evals, portfolio.
 
-> **We are at:** Phase 3 in progress. T3.1 done (Triage Agent). T3.2 next.
-> **Next up:** T3.2 — Security Agent.
+> **We are at:** Phase 3 in progress. T3.1 + T3.2 done. T3.3 next.
+> **Next up:** T3.3 — Cost Agent.
 > **Foundation:** kind cluster, ingress-nginx, ArgoCD (App-of-Apps), full
 > observability stack (Prometheus, Alertmanager, Grafana, Loki, Tempo),
 > Qdrant vector DB, Postgres 16 + pgvector, LiteLLM gateway at
 > http://llm.local, FastAPI `/ask` + WebSocket `/chat/ws` endpoints,
-> LangGraph SRE agent with 5 tools (kubectl get/describe, PromQL,
-> LogQL, RAG search), Next.js 15 chat UI with streaming answers +
+> LangGraph multi-agent graph (triage → SRE / Knowledge / Security
+> specialists) with 9 allow-listed tools (kubectl get/describe, PromQL,
+> LogQL, RAG search, trivy_scan, cve_lookup, falco_events,
+> tetragon_events), Next.js 15 chat UI with streaming answers +
 > clickable citation chips, Helm chart + ArgoCD Application for
 > frontend deployment at http://sentinel.local.
 

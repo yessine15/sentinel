@@ -2,17 +2,24 @@
 
 T2.1-T2.2: Single SRE agent with tool loop.
 T3.1: Triage Agent as entry point — classifies queries and routes to
-      the appropriate specialist (SRE for now; Security + RAG in T3.2+).
+      the appropriate specialist (SRE / Knowledge / General).
+T3.2: Security Agent specialist — security tools (trivy, cve_lookup,
+      falco, tetragon) + triage "security" category + dedicated node.
 
 Flow:
     START → triage_agent → route_to_specialist
-                                ├── "sre" → sre_agent → [tool calls?]
-                                │                ↓              ↓
-                                │              tools ←──────────┘
-                                │                ↓
-                                │             sre_agent → END
+                                ├── "sre"       → sre_agent → [tool calls?]
+                                │                   ↓            ↓
+                                │                 tools ←─────────┘
+                                │                   ↓
+                                │                sre_agent → END
                                 ├── "knowledge" → sre_agent (with RAG hint)
-                                └── "general"   → sre_agent
+                                ├── "general"   → sre_agent
+                                └── "security"  → security_agent → [tool calls?]
+                                                    ↓                ↓
+                                                  sec_tools ←────────┘
+                                                    ↓
+                                                 security_agent → END
 """
 
 from __future__ import annotations
@@ -58,9 +65,31 @@ class AgentState(TypedDict):
 
 
 # ─────────────────────────────────────────────────────────────
-# Tool list — populated from the allow-list registry (T2.2)
+# Tool lists — populated from the allow-list registry (T2.2, T3.2)
 # ─────────────────────────────────────────────────────────────
 SRE_TOOLS = ALLOWED_TOOLS
+"""All registered tools.  The SRE agent's tools include the security
+tools too — when the user asks an SRE question that turns out to be
+security-related mid-flight, the SRE agent can still call trivy/cve.
+This matches how a real on-call engineer pivots to security tooling."""
+
+# T3.2: the subset of tools the Security Agent is allowed to call.
+# We still pass them through the same ToolNode for execution.
+_SECURITY_TOOL_NAMES = frozenset({
+    "trivy_scan",
+    "cve_lookup",
+    "falco_events",
+    "tetragon_events",
+    "kubectl_get",       # so the agent can identify which pod/image
+    "kubectl_describe",  # to dig into the offending workload
+    "rag_search",        # so it can cite relevant runbooks
+})
+SECURITY_TOOLS: list = [
+    t for t in ALLOWED_TOOLS if t.name in _SECURITY_TOOL_NAMES
+]
+"""The Security Agent's dedicated toolset — image scanning, CVE lookup,
+Falco + Tetragon runtime events, plus the read-only kubectl tools
+needed to identify the offending workload."""
 
 
 # ─────────────────────────────────────────────────────────────
@@ -109,6 +138,13 @@ Pick EXACTLY ONE:
   "what's the CPU usage?", "why did that pod restart?", "check the logs for...".
   These need kubectl, Prometheus metrics, or Loki log queries.
 
+- **security**: The user reports or asks about a security concern — suspicious
+  runtime behaviour, a vulnerable image, a CVE, or anything that smells like an
+  attack / hardening question.  Examples: "suspicious exec in a pod",
+  "is nginx:1.25 vulnerable?", "any shell spawned in a container?",
+  "did someone read /etc/shadow?", "what does CVE-2024-12345 affect?",
+  "scan this image for CVEs".  These need trivy, CVE lookup, or Falco/Tetragon.
+
 - **knowledge**: The user asks about the Sentinel project itself — how it works,
   its architecture, code, runbooks, or documentation. Examples: "how does the
   agent work?", "what is the RAG pipeline?", "explain the tool allow-list".
@@ -119,7 +155,7 @@ Pick EXACTLY ONE:
 
 ## Output format (JSON only, no markdown fences)
 
-{"category": "<sre|knowledge|general>", "reasoning": "<one short sentence>", "refined_query": "<the user query, optionally clarified>"}"""
+{"category": "<sre|security|knowledge|general>", "reasoning": "<one short sentence>", "refined_query": "<the user query, optionally clarified>"}"""
 
 
 # ─────────────────────────────────────────────────────────────
@@ -154,6 +190,56 @@ You have access to:
 2. Cite specific file paths and line numbers from search results.
 3. If the knowledge base doesn't have the answer, say so honestly.
 4. You may also use kubectl_get or other tools if the question involves live state."""
+
+
+# ─────────────────────────────────────────────────────────────
+# Specialist system prompt: Security Agent (T3.2)
+# ─────────────────────────────────────────────────────────────
+SECURITY_SYSTEM_PROMPT = """You are the Sentinel **Security Agent** — a
+Kubernetes & supply-chain security specialist.
+
+Your job is to decide whether an incident or query is **security-related** and,
+if so, investigate it with the security tooling.  You cross-check runtime
+events against known CVEs and image-scan results.
+
+## Tools you may call
+- **trivy_scan**: Scan a container image or local filesystem for CVEs,
+  misconfigurations, and secrets.
+- **cve_lookup**: Look up a single CVE id (CVE-YYYY-NNNN) against OSV.dev
+  and return severity, summary, affected packages, and fixed versions.
+- **falco_events**: Retrieve recent Falco runtime-security alerts
+  ("shell in container", "/etc/shadow read", "crypto miner", etc.).
+- **tetragon_events**: Retrieve recent Tetragon eBPF security events
+  (exec, network, file, dns).
+- **kubectl_get** / **kubectl_describe**: Identify the offending workload
+  (pod name, image, namespace) before scanning it.
+- **rag_search**: Find runbooks / past postmortems about this kind of
+  incident so you can cite the canonical response.
+
+## Workflow you should follow
+1. If the user mentions a specific pod/container, use kubectl_get /
+   kubectl_describe to identify its image and namespace.
+2. If they mention suspicious runtime behaviour ("exec in a pod", "shell
+   spawned", "process X opened Y"), pull Falco and/or Tetragon events
+   of the relevant type.
+3. If they mention an image or ask "is X vulnerable", run trivy_scan on it.
+4. If they mention a CVE id (CVE-YYYY-NNNN), run cve_lookup.
+5. Cross-correlate: e.g. a Falco "shell in container" event + an image
+   with HIGH/CRITICAL trivy CVEs = a likely compromise.
+
+## Rules
+1. **Never** guess CVE ids — only look up ids the user gave you or that
+   a tool returned.
+2. **Always** ground decisions in tool output.  "suspicious exec in a
+   pod" is security-related if Falco/Tetragon corroborate it; otherwise
+   say so.
+3. When you flag something as security-related, state your confidence
+   and the evidence succinctly: event type + rule + pod/image + the
+   CVE (if any) + the fix version.
+4. If it is NOT security-related, explain why and suggest the right
+   specialist (SRE for ops, Knowledge for docs).
+5. You may NOT remediate — you only **detect, classify, and report**.
+   Remediation is for the Executor Agent (T3.7)."""
 
 
 # ─────────────────────────────────────────────────────────────
@@ -215,7 +301,22 @@ def triage_agent_node(state: AgentState) -> dict[str, Any]:
                 last_user = (m.content or "").lower()
                 break
 
-        if any(kw in last_user for kw in ("pod", "deploy", "node", "cluster", "metric",
+        # T3.2: security keywords are checked FIRST so that a query that
+        # mentions both a pod and a security signal (e.g. "suspicious exec in
+        # this pod") routes to the Security Agent, not the SRE Agent.
+        security_keywords = (
+            "suspicious", "exec in", "shell in", "shell spawned",
+            "shell was", "shell run", "spawn shell", "spawned shell",
+            "exploit", "malware", "crypto miner", "cryptominer",
+            "cve ", "cve-", "vulnerability", "vulnerable",
+            "image scan", "scan image", "trivy", "falco", "tetragon",
+            "privilege escalat", "./etc/shadow", "/etc/passwd",
+            "reverse shell", "security incident",
+            "compromis", "hardening",
+        )
+        if any(kw in last_user for kw in security_keywords):
+            category = "security"
+        elif any(kw in last_user for kw in ("pod", "deploy", "node", "cluster", "metric",
                                             "cpu", "memory", "log", "crash", "restart",
                                             "kubectl", "prometheus", "loki", "namespace")):
             category = "sre"
@@ -271,27 +372,68 @@ def sre_agent_node(state: AgentState) -> dict[str, Any]:
 
 
 # ─────────────────────────────────────────────────────────────
-# Router: Triage → Specialist (T3.1)
+# Node: Security Agent (T3.2)
 # ─────────────────────────────────────────────────────────────
-def route_to_specialist(state: AgentState) -> Literal["sre_agent", "__end__"]:
-    """Route to the SRE specialist based on the triage classification.
+def security_agent_node(state: AgentState) -> dict[str, Any]:
+    """The Security Agent: classifies security relevance + cross-checks.
 
-    All categories currently route to ``sre_agent`` (which adapts its
-    system prompt based on ``routing``).  Future tasks (T3.2+) will
-    add dedicated specialist agents (security_agent, rag_agent).
+    Prepends the :data:`SECURITY_SYSTEM_PROMPT`, binds *only* the
+    :data:`SECURITY_TOOLS` subset, and lets the LLM drive a tool loop
+    (trivy → cve_lookup → falco/tetragon events → kubectl) to decide
+    whether the incident is genuinely security-related.
+
+    The node mirrors :func:`sre_agent_node` in shape so the rest of the
+    graph (``should_continue``-style routing, ToolNode execution) can be
+    reused.
+    """
+    llm = _build_llm(temperature=0.0)
+    llm_with_tools = llm.bind_tools(SECURITY_TOOLS)
+
+    messages = list(state.get("messages", []))
+    if not messages or not isinstance(messages[0], SystemMessage):
+        messages = [SystemMessage(content=SECURITY_SYSTEM_PROMPT)] + messages
+
+    # Tag the scratchpad so the chat UI / downstream synthesis knows
+    # this branch analysed the incident.
+    sp = dict(state.get("scratchpad", {}))
+    sp["security_agent_visited"] = True
+    sp["triage_category"] = state.get("routing", "security")
+
+    response: AIMessage = llm_with_tools.invoke(messages)
+
+    result: dict[str, Any] = {"messages": [response], "scratchpad": sp}
+    if response.tool_calls:
+        result["tool_calls"] = response.tool_calls
+    return result
+
+
+# ─────────────────────────────────────────────────────────────
+# Router: Triage → Specialist (T3.1, updated T3.2)
+# ─────────────────────────────────────────────────────────────
+def route_to_specialist(state: AgentState) -> Literal["sre_agent", "security_agent", "__end__"]:
+    """Route to the right specialist based on the triage classification.
+
+    T3.1: ``sre`` / ``knowledge`` / ``general`` → ``sre_agent`` (which
+    adapts its system prompt based on ``routing``).
+    T3.2: ``security`` → dedicated :func:`security_agent_node`.
     """
     routing = state.get("routing", "general")
+    if routing == "security":
+        return "security_agent"
     if routing in ("sre", "knowledge", "general"):
         return "sre_agent"
-    # security → will be added in T3.2
-    return "sre_agent"
+    return "__end__"
 
 
 # ─────────────────────────────────────────────────────────────
-# Router: SRE tool loop (T2.1)
+# Router: tool loop (T2.1, extended T3.2)
 # ─────────────────────────────────────────────────────────────
 def should_continue(state: AgentState) -> Literal["tools", "__end__"]:
-    """Route to the tool node if the last message has pending tool calls."""
+    """Route to the tool node if the last message has pending tool calls.
+
+    Used by the SRE agent node — routes tool calls through the shared
+    ``tools`` ToolNode (bound to :data:`SRE_TOOLS`).
+    """
     messages = state.get("messages", [])
     if not messages:
         return "__end__"
@@ -299,6 +441,23 @@ def should_continue(state: AgentState) -> Literal["tools", "__end__"]:
     last = messages[-1]
     if isinstance(last, AIMessage) and last.tool_calls:
         return "tools"
+    return "__end__"
+
+
+def should_continue_security(state: AgentState) -> Literal["sec_tools", "__end__"]:
+    """Route to the security tool node if the last message has tool calls.
+
+    Identical logic to :func:`should_continue` but routes to the dedicated
+    ``sec_tools`` ToolNode (bound to :data:`SECURITY_TOOLS`) so a security
+    agent tool call lands on the right executor.
+    """
+    messages = state.get("messages", [])
+    if not messages:
+        return "__end__"
+
+    last = messages[-1]
+    if isinstance(last, AIMessage) and last.tool_calls:
+        return "sec_tools"
     return "__end__"
 
 
@@ -312,6 +471,10 @@ def build_graph() -> StateGraph:
     and routes to the SRE specialist, which loops with tools until
     it has a final answer.
 
+    T3.2: A ``security`` classification now routes to a dedicated
+    :func:`security_agent_node` with its own ``sec_tools`` ToolNode
+    bound to the security tool subset.
+
     Returns a compiled graph that is ready to ``invoke()``.
     """
     builder = StateGraph(AgentState)
@@ -320,13 +483,20 @@ def build_graph() -> StateGraph:
     builder.add_node("triage_agent", triage_agent_node)
     builder.add_node("sre_agent", sre_agent_node)
     builder.add_node("tools", ToolNode(SRE_TOOLS))
+    # T3.2
+    builder.add_node("security_agent", security_agent_node)
+    builder.add_node("sec_tools", ToolNode(SECURITY_TOOLS))
 
     # Edges — triage first
     builder.set_entry_point("triage_agent")
     builder.add_conditional_edges(
         "triage_agent",
         route_to_specialist,
-        {"sre_agent": "sre_agent", "__end__": END},
+        {
+            "sre_agent": "sre_agent",
+            "security_agent": "security_agent",
+            "__end__": END,
+        },
     )
 
     # Edges — SRE tool loop
@@ -336,6 +506,14 @@ def build_graph() -> StateGraph:
         {"tools": "tools", "__end__": END},
     )
     builder.add_edge("tools", "sre_agent")
+
+    # Edges — Security tool loop (T3.2)
+    builder.add_conditional_edges(
+        "security_agent",
+        should_continue_security,
+        {"sec_tools": "sec_tools", "__end__": END},
+    )
+    builder.add_edge("sec_tools", "security_agent")
 
     return builder.compile()
 

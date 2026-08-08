@@ -145,6 +145,52 @@ def _extract_rag_sources(messages: list) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Streaming helper — runs the graph and pushes events over the WS
 # ---------------------------------------------------------------------------
+async def _emit_agent_chunk(
+    node_output: dict[str, Any],
+    ws: WebSocket,
+    accumulated_text: str,
+    seen_tool_call_ids: set[str],
+) -> str:
+    """Emit tokens + tool-call events for one agent node output chunk.
+
+    Used by both the SRE agent and the Security Agent (T3.2) — they emit
+    the same ``token`` / ``tool`` event shapes so the frontend needs no
+    special-casing.
+
+    Returns the updated ``accumulated_text`` so the caller can thread it
+    through the streaming loop.
+    """
+    new_messages: list = node_output.get("messages", [])
+
+    for msg in new_messages:
+        if isinstance(msg, AIMessage):
+            content = msg.content if hasattr(msg, "content") else ""
+            if isinstance(content, str) and content:
+                # For non-streaming LLMs this is the full response.
+                # Emit only the newly-seen suffix.
+                new_text = content[len(accumulated_text):]
+                if new_text:
+                    accumulated_text = content
+                    await ws.send_json(_token_event(new_text))
+
+            if hasattr(msg, "tool_calls") and msg.tool_calls:
+                for tc in msg.tool_calls:
+                    tc_id = tc.get("id", "")
+                    if tc_id not in seen_tool_call_ids:
+                        seen_tool_call_ids.add(tc_id)
+                        await ws.send_json(
+                            _tool_call_event(
+                                name=tc.get("name", "unknown"),
+                                args=tc.get("args", {}),
+                            )
+                        )
+
+    return accumulated_text
+
+
+# ---------------------------------------------------------------------------
+# Streaming helper — runs the graph and pushes events over the WS
+# ---------------------------------------------------------------------------
 async def _stream_agent(ws: WebSocket, query: str) -> None:
     """Run the LangGraph agent with streaming updates over the WebSocket."""
     try:
@@ -194,37 +240,26 @@ async def _stream_agent(ws: WebSocket, query: str) -> None:
 
             # ── sre_agent node produced output ──
             if "sre_agent" in chunk:
-                sre_output = chunk["sre_agent"]
-                new_messages: list = sre_output.get("messages", [])
+                accumulated_text = await _emit_agent_chunk(
+                    chunk["sre_agent"], ws, accumulated_text, seen_tool_call_ids
+                )
 
-                for msg in new_messages:
-                    if isinstance(msg, AIMessage):
-                        # Emit token(s) — append new content
-                        content = msg.content if hasattr(msg, "content") else ""
-                        if isinstance(content, str) and content:
-                            # For non-streaming LLMs this is the full response.
-                            # We emit it all at once as a token.
-                            new_text = content[len(accumulated_text):]
-                            if new_text:
-                                accumulated_text = content
-                                await ws.send_json(_token_event(new_text))
+            # ── security_agent node produced output (T3.2) ──
+            # Same event shapes as sre_agent — the frontend just sees
+            # tool calls + tokens; we don't need a separate event type.
+            if "security_agent" in chunk:
+                accumulated_text = await _emit_agent_chunk(
+                    chunk["security_agent"], ws, accumulated_text, seen_tool_call_ids
+                )
 
-                        # Emit tool calls
-                        if hasattr(msg, "tool_calls") and msg.tool_calls:
-                            for tc in msg.tool_calls:
-                                tc_id = tc.get("id", "")
-                                if tc_id not in seen_tool_call_ids:
-                                    seen_tool_call_ids.add(tc_id)
-                                    await ws.send_json(
-                                        _tool_call_event(
-                                            name=tc.get("name", "unknown"),
-                                            args=tc.get("args", {}),
-                                        )
-                                    )
-
-            # ── tools node produced output ──
+            # ── tools / sec_tools node produced output ──
+            tools_output = None
             if "tools" in chunk:
                 tools_output = chunk["tools"]
+            elif "sec_tools" in chunk:
+                tools_output = chunk["sec_tools"]
+
+            if tools_output is not None:
                 new_messages: list = tools_output.get("messages", [])
 
                 # Emit tool results
