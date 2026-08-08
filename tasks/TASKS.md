@@ -319,12 +319,16 @@ plan → human approval → executor heals → postmortem → embed`. The operat
 the safe execution bridge.
 
 ## M3.1 More agents
-- [ ] **T3.1 Triage Agent**
-  - Goal: turns a raw alert into a structured incident.
-  - Steps: `/agents/sentinel_agents/agents/triage.py`; enriches labels,
-    severity, affected service; routes to the next node in the graph.
-  - Done when: a fake Alertmanager webhook payload is normalized to a typed
-    incident.
+- [x] **T3.1 Triage Agent**
+  - Goal: turns a raw query/alert into a classified incident with routing.
+  - Steps: `/agents/sentinel_agents/graph.py` with `triage_agent_node`
+    that classifies user messages into `sre`, `knowledge`, or `general`
+    using LLM-based JSON parsing with keyword fallback; `route_to_specialist`
+    router dispatches to the right specialist node; specialist system
+    prompts adapt behaviour per category; WebSocket emits a
+    `classification` event for the frontend.
+  - Done when: submitting "crashed pods?", "how does RAG work?", and
+    "hello!" are correctly classified and routed live.
 
 - [ ] **T3.2 Security Agent**
   - Goal: classifies security relevance + cross-checks runtime events/CVEs.
