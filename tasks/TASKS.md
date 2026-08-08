@@ -347,12 +347,20 @@ the safe execution bridge.
     security-related using these tools.
   - Done when: a "suspicious exec in a pod" payload is flagged security.
 
-- [ ] **T3.3 Cost Agent**
+- [x] **T3.3 Cost Agent**
   - Goal: flags wasted spend + suggests right-sizing.
-  - Steps: tool `kube_resource_usage.py` + (optional) cloud cost API; agent
-    emits a right-sizing suggestion in Terraform form.
+  - Steps: tool `kube_resource_usage.py` (queries Prometheus for CPU/memory
+    requests vs actual usage via pre-defined PromQL templates — metric allow-list:
+    cpu_requests, cpu_usage, cpu_utilisation, memory_requests, memory_usage,
+    memory_utilisation, all); dedicated `cost_agent_node` with `COST_TOOLS`
+    subset (kube_resource_usage, promql_query, kubectl get/describe, rag_search);
+    `cost_tools` ToolNode + `should_continue_cost` router; `cost` category in
+    triage prompt + keyword fallback (over-provisioned, right-sizing, idle,
+    underutilised, waste, spend, etc.); the chat WebSocket streams `cost_agent`
+    events; validators `validate_cost_metric` / `validate_cost_resource` in
+    base.py with frozenset allow-lists.
   - Done when: agent identifies an idle/over-provisioned resource and
-    proposes a concrete change.
+    proposes a concrete change (Terraform HCL snippet in stub output).
 
 - [ ] **T3.4 RAG Agent (as a proper agent)**
   - Goal: dedicated retrieval agent returning ranked evidence + citations.

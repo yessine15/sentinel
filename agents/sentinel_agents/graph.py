@@ -5,6 +5,8 @@ T3.1: Triage Agent as entry point — classifies queries and routes to
       the appropriate specialist (SRE / Knowledge / General).
 T3.2: Security Agent specialist — security tools (trivy, cve_lookup,
       falco, tetragon) + triage "security" category + dedicated node.
+T3.3: Cost Agent specialist — kube_resource_usage tool + triage "cost"
+      category + right-sizing suggestions in Terraform form.
 
 Flow:
     START → triage_agent → route_to_specialist
@@ -15,11 +17,16 @@ Flow:
                                 │                sre_agent → END
                                 ├── "knowledge" → sre_agent (with RAG hint)
                                 ├── "general"   → sre_agent
-                                └── "security"  → security_agent → [tool calls?]
-                                                    ↓                ↓
-                                                  sec_tools ←────────┘
-                                                    ↓
-                                                 security_agent → END
+                                ├── "security"  → security_agent → [tool calls?]
+                                │                   ↓                ↓
+                                │                 sec_tools ←────────┘
+                                │                   ↓
+                                │                security_agent → END
+                                └── "cost"      → cost_agent → [tool calls?]
+                                                      ↓            ↓
+                                                    cost_tools ←───┘
+                                                      ↓
+                                                   cost_agent → END
 """
 
 from __future__ import annotations
@@ -91,6 +98,23 @@ SECURITY_TOOLS: list = [
 Falco + Tetragon runtime events, plus the read-only kubectl tools
 needed to identify the offending workload."""
 
+# T3.3: the subset of tools the Cost Agent is allowed to call.
+# It uses kube_resource_usage (which itself calls Prometheus under the
+# hood) plus kubectl tools to validate workload identities and
+# promql_query for custom resource-utilisation queries.
+_COST_TOOL_NAMES = frozenset({
+    "kube_resource_usage",
+    "promql_query",       # bespoke CPU/memory queries
+    "kubectl_get",        # enumerate deployments / statefulsets
+    "kubectl_describe",   # inspect resource requests/limits
+    "rag_search",         # past cost-optimisation runbooks
+})
+COST_TOOLS: list = [
+    t for t in ALLOWED_TOOLS if t.name in _COST_TOOL_NAMES
+]
+"""The Cost Agent's dedicated toolset — resource usage analysis via
+Prometheus, plus read-only kubectl tools to identify workloads."""
+
 
 # ─────────────────────────────────────────────────────────────
 # LLM factories
@@ -145,6 +169,12 @@ Pick EXACTLY ONE:
   "did someone read /etc/shadow?", "what does CVE-2024-12345 affect?",
   "scan this image for CVEs".  These need trivy, CVE lookup, or Falco/Tetragon.
 
+- **cost**: The user asks about resource waste, idle workloads, over-provisioning,
+  right-sizing, or cloud spend optimisation.  Examples: "which deployments are
+  over-provisioned?", "are we wasting CPU?", "find idle workloads", "suggest
+  right-sizing for sentinel", "what's our memory utilisation?".  These need
+  kube_resource_usage or Prometheus resource metrics.
+
 - **knowledge**: The user asks about the Sentinel project itself — how it works,
   its architecture, code, runbooks, or documentation. Examples: "how does the
   agent work?", "what is the RAG pipeline?", "explain the tool allow-list".
@@ -155,7 +185,7 @@ Pick EXACTLY ONE:
 
 ## Output format (JSON only, no markdown fences)
 
-{"category": "<sre|security|knowledge|general>", "reasoning": "<one short sentence>", "refined_query": "<the user query, optionally clarified>"}"""
+{"category": "<sre|security|cost|knowledge|general>", "reasoning": "<one short sentence>", "refined_query": "<the user query, optionally clarified>"}"""
 
 
 # ─────────────────────────────────────────────────────────────
@@ -243,6 +273,69 @@ events against known CVEs and image-scan results.
 
 
 # ─────────────────────────────────────────────────────────────
+# Specialist system prompt: Cost Agent (T3.3)
+# ─────────────────────────────────────────────────────────────
+COST_SYSTEM_PROMPT = """You are the Sentinel **Cost Agent** — a Kubernetes
+resource efficiency specialist.
+
+Your job is to identify **idle or over-provisioned** workloads and propose
+concrete right-sizing suggestions in **Terraform (HCL) form** so the
+platform team can apply them directly.
+
+## Tools you may call
+- **kube_resource_usage**: Query Prometheus for CPU/memory requests vs
+  actual usage.  Use metric="all" for a complete picture, or target a
+  specific metric (cpu_utilisation, memory_utilisation, etc.).
+- **promql_query**: Run custom resource-utilisation PromQL queries when
+  you need more detail than kube_resource_usage provides.
+- **kubectl_get** / **kubectl_describe**: Enumerate workloads and inspect
+  their current resource requests and limits.
+- **rag_search**: Find past cost-optimisation runbooks and right-sizing
+  recommendations.
+
+## Workflow you should follow
+1. Start with **kube_resource_usage(metric="all")** to get a full
+   CPU + memory utilisation snapshot across all namespaces.
+2. For any workloads flagged below the default threshold (30% utilisation),
+   drill in with **kubectl_describe** to confirm the declared requests/limits.
+3. If the user asked about a specific namespace or workload, scope your
+   queries accordingly.
+4. For every over-provisioned workload, propose a concrete change: the
+   **current** value → the **recommended** value with a brief
+   justification (e.g. "9% CPU util over 7 days — reduce from 500m to
+   100m (2× headroom)").
+
+## Right-sizing rules
+- Recommend **new requests = avg usage × 2** (never less than 50m CPU
+  or 64Mi memory).
+- Flag workloads using **<15%** of their requests as **severely
+  over-provisioned** (highlight with ⚠️).
+- For burstable workloads (spiky utilisation), recommend keeping the
+  current request and adding a **limit** instead of reducing.
+- Always emit the suggestion as a **Terraform HCL snippet** the user
+  can copy into their infrastructure-as-code repo.
+
+## Output format
+For each over-provisioned workload, output:
+
+```
+⚠️ <workload> / <namespace> — <verdict>
+   CPU: <request> → <recommended> (<utilisation>% util)
+   Memory: <request> → <recommended> (<utilisation>% util)
+   Justification: <one sentence>
+```
+
+Then provide a complete Terraform HCL snippet at the end.
+
+## Rules
+1. Always ground suggestions in tool output — never guess resource usage.
+2. If kube_resource_usage returns no data, say so and suggest checking
+   that kube-state-metrics is deployed.
+3. You may NOT patch resources — you only **analyse and recommend**.
+   Execution is for the Executor Agent (T3.7)."""
+
+
+# ─────────────────────────────────────────────────────────────
 # Node: Triage Agent (T3.1)
 # ─────────────────────────────────────────────────────────────
 def triage_agent_node(state: AgentState) -> dict[str, Any]:
@@ -280,7 +373,7 @@ def triage_agent_node(state: AgentState) -> dict[str, Any]:
         classification = json.loads(raw)
         category = classification.get("category", "general").lower().strip()
         # Validate category
-        if category not in ("sre", "knowledge", "general", "security"):
+        if category not in ("sre", "knowledge", "general", "security", "cost"):
             category = "general"
 
         return {
@@ -316,6 +409,21 @@ def triage_agent_node(state: AgentState) -> dict[str, Any]:
         )
         if any(kw in last_user for kw in security_keywords):
             category = "security"
+        # T3.3: cost keywords — queries about right-sizing, waste, idle
+        # resources, or cloud spend.  Checked before SRE so that "which
+        # deployments are over-provisioned" isn't classified as SRE.
+        elif any(kw in last_user for kw in (
+            "over-provisioned", "overprovisioned", "over provision",
+            "right-size", "rightsiz", "right size",
+            "waste", "wasted", "idle", "underutil",
+            "under-util", "save money", "cost saving",
+            "cost optim", "spend", "cloud cost",
+            "resource usage", "resource utiliz", "resource utilis",
+            "utilisation", "utilization",
+            "sizing", "downsize", "shrink",
+            "too much cpu", "too much memory", "too many resources",
+        )):
+            category = "cost"
         elif any(kw in last_user for kw in ("pod", "deploy", "node", "cluster", "metric",
                                             "cpu", "memory", "log", "crash", "restart",
                                             "kubectl", "prometheus", "loki", "namespace")):
@@ -408,18 +516,24 @@ def security_agent_node(state: AgentState) -> dict[str, Any]:
 
 
 # ─────────────────────────────────────────────────────────────
-# Router: Triage → Specialist (T3.1, updated T3.2)
+# Router: Triage → Specialist (T3.1, updated T3.2, T3.3)
 # ─────────────────────────────────────────────────────────────
-def route_to_specialist(state: AgentState) -> Literal["sre_agent", "security_agent", "__end__"]:
+def route_to_specialist(state: AgentState) -> Literal["sre_agent", "security_agent", "cost_agent", "__end__"]:
     """Route to the right specialist based on the triage classification.
 
     T3.1: ``sre`` / ``knowledge`` / ``general`` → ``sre_agent`` (which
     adapts its system prompt based on ``routing``).
     T3.2: ``security`` → dedicated :func:`security_agent_node`.
+    T3.3: ``cost`` → dedicated :func:`cost_agent_node`.
     """
     routing = state.get("routing", "general")
     if routing == "security":
         return "security_agent"
+    if routing == "cost":
+        return "cost_agent"
+    if routing in ("sre", "knowledge", "general"):
+        return "sre_agent"
+    return "__end__"
     if routing in ("sre", "knowledge", "general"):
         return "sre_agent"
     return "__end__"
@@ -462,7 +576,63 @@ def should_continue_security(state: AgentState) -> Literal["sec_tools", "__end__
 
 
 # ─────────────────────────────────────────────────────────────
-# Graph builder (updated T3.1)
+# Node: Cost Agent (T3.3)
+# ─────────────────────────────────────────────────────────────
+def cost_agent_node(state: AgentState) -> dict[str, Any]:
+    """The Cost Agent: analyses resource utilisation and proposes right-sizing.
+
+    Prepends the :data:`COST_SYSTEM_PROMPT`, binds *only* the
+    :data:`COST_TOOLS` subset (kube_resource_usage, promql_query,
+    kubectl_get/describe, rag_search), and lets the LLM drive a tool
+    loop to identify over-provisioned workloads and emit Terraform
+    right-sizing suggestions.
+
+    The node mirrors :func:`sre_agent_node` and
+    :func:`security_agent_node` in shape so the rest of the graph
+    (``should_continue``-style routing, ToolNode execution) can be
+    reused.
+    """
+    llm = _build_llm(temperature=0.0)
+    llm_with_tools = llm.bind_tools(COST_TOOLS)
+
+    messages = list(state.get("messages", []))
+    if not messages or not isinstance(messages[0], SystemMessage):
+        messages = [SystemMessage(content=COST_SYSTEM_PROMPT)] + messages
+
+    # Tag the scratchpad so the chat UI / downstream synthesis knows
+    # this branch analysed the cost.
+    sp = dict(state.get("scratchpad", {}))
+    sp["cost_agent_visited"] = True
+    sp["triage_category"] = state.get("routing", "cost")
+
+    response: AIMessage = llm_with_tools.invoke(messages)
+
+    result: dict[str, Any] = {"messages": [response], "scratchpad": sp}
+    if response.tool_calls:
+        result["tool_calls"] = response.tool_calls
+    return result
+
+
+def should_continue_cost(state: AgentState) -> Literal["cost_tools", "__end__"]:
+    """Route to the cost tool node if the last message has tool calls.
+
+    Identical logic to :func:`should_continue` and
+    :func:`should_continue_security` but routes to the dedicated
+    ``cost_tools`` ToolNode (bound to :data:`COST_TOOLS`) so a cost
+    agent tool call lands on the right executor.
+    """
+    messages = state.get("messages", [])
+    if not messages:
+        return "__end__"
+
+    last = messages[-1]
+    if isinstance(last, AIMessage) and last.tool_calls:
+        return "cost_tools"
+    return "__end__"
+
+
+# ─────────────────────────────────────────────────────────────
+# Graph builder (updated T3.1, T3.2, T3.3)
 # ─────────────────────────────────────────────────────────────
 def build_graph() -> StateGraph:
     """Build and compile the multi-agent StateGraph.
@@ -475,6 +645,10 @@ def build_graph() -> StateGraph:
     :func:`security_agent_node` with its own ``sec_tools`` ToolNode
     bound to the security tool subset.
 
+    T3.3: A ``cost`` classification now routes to a dedicated
+    :func:`cost_agent_node` with its own ``cost_tools`` ToolNode
+    bound to the cost tool subset.
+
     Returns a compiled graph that is ready to ``invoke()``.
     """
     builder = StateGraph(AgentState)
@@ -486,6 +660,9 @@ def build_graph() -> StateGraph:
     # T3.2
     builder.add_node("security_agent", security_agent_node)
     builder.add_node("sec_tools", ToolNode(SECURITY_TOOLS))
+    # T3.3
+    builder.add_node("cost_agent", cost_agent_node)
+    builder.add_node("cost_tools", ToolNode(COST_TOOLS))
 
     # Edges — triage first
     builder.set_entry_point("triage_agent")
@@ -495,6 +672,7 @@ def build_graph() -> StateGraph:
         {
             "sre_agent": "sre_agent",
             "security_agent": "security_agent",
+            "cost_agent": "cost_agent",
             "__end__": END,
         },
     )
@@ -514,6 +692,14 @@ def build_graph() -> StateGraph:
         {"sec_tools": "sec_tools", "__end__": END},
     )
     builder.add_edge("sec_tools", "security_agent")
+
+    # Edges — Cost tool loop (T3.3)
+    builder.add_conditional_edges(
+        "cost_agent",
+        should_continue_cost,
+        {"cost_tools": "cost_tools", "__end__": END},
+    )
+    builder.add_edge("cost_tools", "cost_agent")
 
     return builder.compile()
 

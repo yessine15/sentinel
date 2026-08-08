@@ -252,12 +252,21 @@ async def _stream_agent(ws: WebSocket, query: str) -> None:
                     chunk["security_agent"], ws, accumulated_text, seen_tool_call_ids
                 )
 
-            # ── tools / sec_tools node produced output ──
+            # ── cost_agent node produced output (T3.3) ──
+            # Same event shapes as sre_agent / security_agent.
+            if "cost_agent" in chunk:
+                accumulated_text = await _emit_agent_chunk(
+                    chunk["cost_agent"], ws, accumulated_text, seen_tool_call_ids
+                )
+
+            # ── tools / sec_tools / cost_tools node produced output ──
             tools_output = None
             if "tools" in chunk:
                 tools_output = chunk["tools"]
             elif "sec_tools" in chunk:
                 tools_output = chunk["sec_tools"]
+            elif "cost_tools" in chunk:
+                tools_output = chunk["cost_tools"]
 
             if tools_output is not None:
                 new_messages: list = tools_output.get("messages", [])

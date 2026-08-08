@@ -278,20 +278,38 @@
   tool loop doesn't fire end-to-end on gemma4 — see
   `/memories/repo/gemma4-tool-calling.md`; the T3.2 acceptance
   criterion (flagged security at triage) is satisfied.
+- [x] **T3.3 Cost Agent** (2026-08-08, v0.5.0): New tool
+  `kube_resource_usage.py` queries Prometheus with pre-defined
+  PromQL templates (CPU/memory requests vs actual usage) via a
+  metric allow-list (`cpu_requests`, `cpu_usage`, `cpu_utilisation`,
+  `memory_requests`, `memory_usage`, `memory_utilisation`, `all`).
+  Cost validators in `base.py` with `frozenset` allow-lists for
+  metrics (7) and right-sizable resources (deployments, statefulsets,
+  daemonsets, jobs, cronjobs, pods).  Dedicated `cost_agent_node`
+  with `COST_TOOLS` (kube_resource_usage, promql_query, kubectl
+  get/describe, rag_search — 5 tools), `cost_tools` ToolNode +
+  `should_continue_cost` router, `cost` category in triage prompt
+  (5 examples: over-provisioned, CPU waste, idle workloads,
+  right-sizing, memory utilisation) + keyword fallback (~20 keywords).
+  Stub output includes a full Terraform HCL snippet for
+  over-provisioned workloads.  Chat WebSocket streams `cost_agent`
+  events.  195 tests pass (up from 139: +42 cost_tools + 14 graph),
+  10 skipped (live tools).  Live smoke test: all 5 cost queries
+  classified correctly by gemma4.
 - [ ] Phase 4: Security hardening.
 - [ ] Phase 5: Polish, evals, portfolio.
 
-> **We are at:** Phase 3 in progress. T3.1 + T3.2 done. T3.3 next.
-> **Next up:** T3.3 — Cost Agent.
+> **We are at:** Phase 3 in progress. T3.1 + T3.2 + T3.3 done. T3.4 next.
+> **Next up:** T3.4 — RAG Agent (as a proper agent).
 > **Foundation:** kind cluster, ingress-nginx, ArgoCD (App-of-Apps), full
 > observability stack (Prometheus, Alertmanager, Grafana, Loki, Tempo),
 > Qdrant vector DB, Postgres 16 + pgvector, LiteLLM gateway at
 > http://llm.local, FastAPI `/ask` + WebSocket `/chat/ws` endpoints,
-> LangGraph multi-agent graph (triage → SRE / Knowledge / Security
-> specialists) with 9 allow-listed tools (kubectl get/describe, PromQL,
+> LangGraph multi-agent graph (triage → SRE / Knowledge / Security / Cost
+> specialists) with 10 allow-listed tools (kubectl get/describe, PromQL,
 > LogQL, RAG search, trivy_scan, cve_lookup, falco_events,
-> tetragon_events), Next.js 15 chat UI with streaming answers +
-> clickable citation chips, Helm chart + ArgoCD Application for
+> tetragon_events, kube_resource_usage), Next.js 15 chat UI with streaming
+> answers + clickable citation chips, Helm chart + ArgoCD Application for
 > frontend deployment at http://sentinel.local.
 
 ---

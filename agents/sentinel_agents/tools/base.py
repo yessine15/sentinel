@@ -326,6 +326,57 @@ def validate_falco_operation(operation: str) -> None:
         )
 
 
+# ── T3.3 Cost Agent ──────────────────────────────────────────
+# Resource usage metrics — the resource types the cost agent may
+# query via PromQL to detect over-provisioned / idle workloads.
+ALLOWED_COST_METRICS: frozenset[str] = frozenset({
+    "cpu_requests",
+    "cpu_usage",
+    "cpu_utilisation",
+    "memory_requests",
+    "memory_usage",
+    "memory_utilisation",
+    "all",
+})
+
+# Kubernetes resource kinds the cost agent may right-size.
+# Only workload resources that have CPU/memory requests/limits.
+ALLOWED_COST_RESOURCES: frozenset[str] = frozenset({
+    "deployments",
+    "deployment",
+    "statefulsets",
+    "statefulset",
+    "daemonsets",
+    "daemonset",
+    "jobs",
+    "job",
+    "cronjobs",
+    "cronjob",
+    "pods",
+    "pod",
+})
+
+
+def validate_cost_metric(metric: str) -> None:
+    """Raise ``ToolSecurityError`` if *metric* is not in the cost allow-list."""
+    m = (metric or "").lower().strip()
+    if m not in ALLOWED_COST_METRICS:
+        raise DisallowedQueryError(
+            f"Cost metric '{metric}' is NOT allowed. "
+            f"Allowed: {sorted(ALLOWED_COST_METRICS)}"
+        )
+
+
+def validate_cost_resource(resource: str) -> None:
+    """Raise ``ToolSecurityError`` if *resource* is not a right-sizable kind."""
+    r = (resource or "").lower().strip()
+    if r not in ALLOWED_COST_RESOURCES:
+        raise DisallowedQueryError(
+            f"Cost resource kind '{resource}' is NOT allowed. "
+            f"Allowed: {sorted(set(r for r in ALLOWED_COST_RESOURCES if len(r) > 3))}"
+        )
+
+
 # ─────────────────────────────────────────────────────────────
 # Tool registry
 # ─────────────────────────────────────────────────────────────

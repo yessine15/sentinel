@@ -27,16 +27,17 @@ from sentinel_agents.tools.base import (
 # Registry
 # ════════════════════════════════════════════════════════════
 class TestRegistry:
-    """The tool registry discovers all nine allow-listed tools.
+    """The tool registry discovers all ten allow-listed tools.
 
     T2.2: five SRE tools.  T3.2: four security tools (trivy, cve, falco,
-    tetragon).  Total: nine.
+    tetragon).  T3.3: one cost tool (kube_resource_usage).  Total: ten.
     """
 
-    def test_get_all_tools_returns_nine_tools(self):
+    def test_get_all_tools_returns_ten_tools(self):
         tools = get_all_tools()
-        assert len(tools) == 9  # kubectl_get, describe, promql, logql, rag_search
-        #                      #   + trivy_scan, cve_lookup, falco_events, tetragon_events
+        assert len(tools) == 10  # kubectl_get, describe, promql, logql, rag_search
+        #                       #   + trivy_scan, cve_lookup, falco_events, tetragon_events
+        #                       #   + kube_resource_usage
 
     def test_get_tool_names_is_sorted(self):
         names = get_tool_names()
@@ -51,6 +52,8 @@ class TestRegistry:
         assert "cve_lookup" in names
         assert "falco_events" in names
         assert "tetragon_events" in names
+        # T3.3 cost tool
+        assert "kube_resource_usage" in names
 
     def test_every_tool_has_name_and_docstring(self):
         for t in get_all_tools():
@@ -65,6 +68,13 @@ class TestRegistry:
         assert {t.name for t in sec} == {
             "trivy_scan", "cve_lookup", "falco_events", "tetragon_events"
         }
+
+    def test_cost_tool_categorised(self):
+        """T3.3: the cost tool is tagged 'cost'."""
+        from sentinel_agents.tools import ALLOWED_TOOLS
+        cost = [t for t in ALLOWED_TOOLS
+                if getattr(t, "__sentinel_category__", None) == "cost"]
+        assert {t.name for t in cost} == {"kube_resource_usage"}
 
 
 # ════════════════════════════════════════════════════════════

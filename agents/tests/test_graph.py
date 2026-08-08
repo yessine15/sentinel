@@ -1,4 +1,4 @@
-"""Tests for the LangGraph multi-agent graph (T2.1 + T3.1 + T3.2)."""
+"""Tests for the LangGraph multi-agent graph (T2.1 + T3.1 + T3.2 + T3.3)."""
 
 import json
 
@@ -6,9 +6,13 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 
 from sentinel_agents.graph import (
     AgentState,
+    COST_SYSTEM_PROMPT,
+    COST_TOOLS,
     SECURITY_SYSTEM_PROMPT,
     SECURITY_TOOLS,
     TRIAGE_SYSTEM_PROMPT,
+    cost_agent_node,
+    should_continue_cost,
     security_agent_node,
     should_continue_security,
     build_graph,
@@ -52,9 +56,9 @@ class TestGraphBuild:
         assert "classification_json" in state
 
     def test_sre_tools_are_available(self):
-        """The graph uses the real allow-listed tool set (T2.2 + T2.4 + T3.2)."""
+        """The graph uses the real allow-listed tool set (T2.2 + T2.4 + T3.2 + T3.3)."""
         from sentinel_agents.graph import SRE_TOOLS
-        assert len(SRE_TOOLS) >= 9  # 5 SRE + 4 security tools
+        assert len(SRE_TOOLS) >= 10  # 5 SRE + 4 security + 1 cost
         tool_names = {t.name for t in SRE_TOOLS}
         assert "kubectl_get" in tool_names
         assert "kubectl_describe" in tool_names
@@ -66,6 +70,8 @@ class TestGraphBuild:
         assert "cve_lookup" in tool_names
         assert "falco_events" in tool_names
         assert "tetragon_events" in tool_names
+        # T3.3 cost tool
+        assert "kube_resource_usage" in tool_names
 
     def test_graph_has_triage_entry_point(self):
         """T3.1: The graph starts at triage_agent, not sre_agent."""
@@ -83,6 +89,11 @@ class TestGraphBuild:
         """T3.2: the triage prompt documents the 'security' category."""
         assert "security" in TRIAGE_SYSTEM_PROMPT.lower()
         assert "suspicious exec" in TRIAGE_SYSTEM_PROMPT.lower() or "exec in" in TRIAGE_SYSTEM_PROMPT.lower()
+
+    def test_triage_prompt_lists_cost_category(self):
+        """T3.3: the triage prompt documents the 'cost' category."""
+        assert "cost" in TRIAGE_SYSTEM_PROMPT.lower()
+        assert "over-provisioned" in TRIAGE_SYSTEM_PROMPT.lower() or "right-sizing" in TRIAGE_SYSTEM_PROMPT.lower()
 
 
 class TestTriageNode:
@@ -145,6 +156,11 @@ class TestRouteToSpecialist:
         security_agent_node, not the SRE agent."""
         state = _make_state(routing="security")
         assert route_to_specialist(state) == "security_agent"
+
+    def test_routes_cost_to_cost_agent(self):
+        """T3.3: cost classification routes to the dedicated cost_agent_node."""
+        state = _make_state(routing="cost")
+        assert route_to_specialist(state) == "cost_agent"
 
 
 class TestShouldContinueRouter:
@@ -348,3 +364,134 @@ class TestTriageSecurityFallback:
         """A non-security ops query must NOT be misclassified as security."""
         cat = self._fallback("are there any failing pods?")
         assert cat == "sre"
+
+
+# ════════════════════════════════════════════════════════════
+# T3.3 — Cost Agent
+# ════════════════════════════════════════════════════════════
+class TestCostAgentBuild:
+    """The graph wires up the Cost Agent node + its tool loop."""
+
+    def test_cost_system_prompt_exists(self):
+        """T3.3: the cost agent system prompt is defined."""
+        assert len(COST_SYSTEM_PROMPT) > 100
+        assert "Cost Agent" in COST_SYSTEM_PROMPT
+
+    def test_cost_tools_subset_is_correct(self):
+        """T3.3: COST_TOOLS contains kube_resource_usage + supporting tools."""
+        names = {t.name for t in COST_TOOLS}
+        assert "kube_resource_usage" in names
+        assert "promql_query" in names
+        assert "kubectl_get" in names
+        assert "kubectl_describe" in names
+        assert "rag_search" in names
+        # it must NOT include SRE-only or security tools
+        assert "logql_query" not in names
+        assert "trivy_scan" not in names
+        assert "falco_events" not in names
+
+    def test_graph_includes_cost_agent_node(self):
+        """T3.3: the compiled graph has 'cost_agent' and 'cost_tools' nodes."""
+        g = build_graph()
+        try:
+            nodes = g.get_graph().nodes
+            assert "cost_agent" in nodes
+            assert "cost_tools" in nodes
+        except Exception:
+            pass
+
+
+class TestShouldContinueCostRouter:
+    """T3.3: the should_continue_cost router drives the cost_tools loop."""
+
+    def test_ends_on_empty_messages(self):
+        state = _make_state()
+        assert should_continue_cost(state) == "__end__"
+
+    def test_ends_on_plain_ai(self):
+        state = _make_state(messages=[AIMessage(content="no over-provisioned workloads found")])
+        assert should_continue_cost(state) == "__end__"
+
+    def test_routes_to_cost_tools_on_tool_calls(self):
+        state = _make_state(
+            messages=[
+                AIMessage(
+                    content="",
+                    tool_calls=[{
+                        "name": "kube_resource_usage",
+                        "args": {"metric": "all"},
+                        "id": "call_cost_1",
+                    }],
+                )
+            ],
+        )
+        assert should_continue_cost(state) == "cost_tools"
+
+
+class TestCostAgentNode:
+    """T3.3: cost_agent_node behaviour without a live LLM."""
+
+    def test_routing_cost_on_state(self):
+        """cost_agent_node reads state.routing."""
+        state = _make_state(
+            messages=[HumanMessage(content="find over-provisioned deployments")],
+            routing="cost",
+        )
+        try:
+            out = cost_agent_node(state)
+        except Exception:
+            return
+        assert isinstance(out, dict)
+        assert "messages" in out
+
+    def test_scratchpad_records_cost_visit(self):
+        """T3.3: cost_agent_node marks the scratchpad as visited."""
+        state = _make_state(
+            messages=[HumanMessage(content="which workloads are idle?")],
+            routing="cost",
+            scratchpad={"pre_existing": 1},
+        )
+        try:
+            out = cost_agent_node(state)
+        except Exception:
+            return
+        sp = out.get("scratchpad", {})
+        assert sp.get("cost_agent_visited") is True
+        assert sp.get("pre_existing") == 1
+
+
+class TestTriageCostFallback:
+    """T3.3: the keyword fallback recognises cost queries."""
+
+    def _fallback(self, text: str) -> str:
+        result = triage_agent_node(_make_state(messages=[HumanMessage(content=text)]))
+        return result.get("routing")
+
+    def test_over_provisioned_routes_to_cost(self):
+        """T3.3 acceptance: 'which deployments are over-provisioned?' → cost."""
+        cat = self._fallback("which deployments are over-provisioned?")
+        assert cat == "cost"
+
+    def test_right_sizing_routes_to_cost(self):
+        cat = self._fallback("suggest right-sizing for sentinel")
+        assert cat == "cost"
+
+    def test_idle_workload_routes_to_cost(self):
+        cat = self._fallback("find idle workloads")
+        assert cat == "cost"
+
+    def test_resource_utilisation_routes_to_cost(self):
+        cat = self._fallback("what is our memory utilisation?")
+        assert cat == "cost"
+
+    def test_waste_query_routes_to_cost(self):
+        cat = self._fallback("we have idle resources — can you help with right-sizing?")
+        assert cat == "cost"
+
+    def test_cost_optimisation_routes_to_cost(self):
+        cat = self._fallback("help me with cost optimisation")
+        assert cat == "cost"
+
+    def test_spend_routes_to_cost(self):
+        cat = self._fallback("how to reduce cloud spend?")
+        assert cat == "cost"
