@@ -695,12 +695,46 @@ gate deploys; images are signed and scanned. Security autopilot demo works.
     (pod/node matrix) green.  Acceptance met: pods communicate, cilium
     status OK, Hubble UI shows a traffic flow map.
 
-- [ ] **T4.2 Install Tetragon**
+- [x] **T4.2 Install Tetragon**
   - Goal: eBPF runtime security events.
   - Steps: Helm chart under `gitops/components/tetragon/`; enable a starter
     policy that logs suspicious exec; expose Tetragon events to the agent.
   - Done when: triggering `bash` inside an nginx pod produces a Tetragon
     event visible to the Security Agent.
+  - Implemented: wrapper Helm chart `gitops/components/tetragon/`
+    (Chart.yaml dependency on cilium/tetragon 1.7.0 + values.yaml: cluster
+    name sentinel, JSON export via hubble-export-stdout sidecar — the
+    agent writes NDJSON to /var/run/cilium/tetragon/tetragon.log and the
+    sidecar tails it to stdout; modest resources).  Starter TracingPolicy
+    `policies/suspicious-exec.yaml` — kprobe on security_bprm_check +
+    matchBinaries In [bash/sh/dash/ash] (the "shell in a pod" signal).
+    Bootstrap infra → manual install via new `scripts/install-tetragon.sh`
+    (NOT an ArgoCD Application, same rationale as Cilium).  **Live wiring
+    of the T3.2 `tetragon_events` tool**: added support for Tetragon's
+    NESTED export format ({"process_exec": {...}}), per-line kubectl
+    --prefix stripping, event-type filtering, exec queries sorted with
+    shell binaries first, and a kubectl fallback live path — enumerate
+    agent pods (`kubectl get pods -l app.kubernetes.io/name=tetragon`)
+    and read each `export-stdout` log (DS-level `--tail`/`--since`
+    aggregation is unreliable on kind+containerd — returns one pod's
+    lines only).  The HTTP bridge path stays (TETRAGON_URL) and detects
+    the `{"error":...}` JSON from _httpx_get to fall back instead of
+    summarising the error as an event (real bug found + fixed).
+    **Real bug found (kernel 7.0.12 + Tetragon 1.7.0)**: policy selector
+    matching does not fire — matchArgs string extraction returns empty
+    (tracepoint AND kprobe arg types) and matchBinaries never matches;
+    the base process_exec tracing DOES export every exec with pod
+    context, so the acceptance is covered by the tool's client-side
+    shell filter; the policy loads cleanly, documents intent, and works
+    on kernels where selectors function (documented in the policy file).
+    Version 0.12.0; tests 619 passed / 10 skipped (+14 tetragon tests:
+    nested-format summariser, prefix stripping, type filtering, shell
+    sorting, kubectl fallback incl. error paths).  **Live acceptance**:
+    `kubectl exec -n sentinel deploy/test-api -- sh -c "echo pwned; id"`
+    → `tetragon_events(event_type=exec)` returns
+    `exec ns=sentinel pod=test-api-... pid=... binary=/usr/bin/sh
+    args: -c "echo pwned; id"` — the event is visible to the Security
+    Agent (shell events surfaced first).
 
 - [ ] **T4.3 Install Falco (rule-based alerts)**
   - Goal: complementary runtime rule alerting.

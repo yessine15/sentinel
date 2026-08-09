@@ -196,6 +196,170 @@ class TestTetragonEvents:
 
 
 # ════════════════════════════════════════════════════════════
+# tetragon_events — T4.2 export-format summariser + kubectl fallback
+# ════════════════════════════════════════════════════════════
+class TestTetragonExportFormat:
+    """The live export stream is NESTED NDJSON — the summariser must
+    unwrap it and surface the pod/binary context."""
+
+    _NESTED = (
+        '{"process_exec":{"process":{"pid":16473,"uid":101,"binary":"/usr/bin/sh",'
+        '"arguments":"/bin/sh -c whoami","pod":{"namespace":"sentinel",'
+        '"name":"test-api-abc"}}}}'
+    )
+
+    def test_unwrap_nested_exec(self):
+        from sentinel_agents.tools.tetragon_events import _unwrap_event
+        import json
+
+        ev = _unwrap_event(json.loads(self._NESTED))
+        assert ev["type"] == "process_exec"
+        assert ev["process"]["binary"] == "/usr/bin/sh"
+
+    def test_unwrap_flat_format(self):
+        from sentinel_agents.tools.tetragon_events import _unwrap_event
+
+        ev = _unwrap_event({"type": "exec", "process": {"pid": 1}, "event": {}})
+        assert ev["type"] == "exec"
+        assert ev["process"]["pid"] == 1
+
+    def test_unwrap_unknown_returns_empty(self):
+        from sentinel_agents.tools.tetragon_events import _unwrap_event
+
+        assert _unwrap_event({"something_else": 1}) == {}
+
+    def test_summarise_nested_exec_stream(self):
+        from sentinel_agents.tools.tetragon_events import _summarise_events
+
+        out = _summarise_events(self._NESTED, "exec")
+        assert "process_exec" in out or "exec" in out
+        assert "/usr/bin/sh" in out
+        assert "test-api-abc" in out
+        assert "sentinel" in out
+
+    def test_summarise_strips_kubectl_prefix(self):
+        from sentinel_agents.tools.tetragon_events import _summarise_events
+
+        raw = "[pod/tetragon-x/export-stdout] " + self._NESTED
+        out = _summarise_events(raw, "exec")
+        assert "test-api-abc" in out
+        assert "[pod/" not in out.split("returned")[1]
+
+    def test_summarise_filters_by_type(self):
+        from sentinel_agents.tools.tetragon_events import _summarise_events
+
+        raw = (
+            '{"process_exec":{"process":{"pid":1,"binary":"/bin/sh","pod":{"namespace":"n","name":"p"}}}}\n'
+            '{"process_exit":{"process":{"pid":2,"binary":"nginx","pod":{"namespace":"n","name":"p"}}}}\n'
+        )
+        out = _summarise_events(raw, "exit")
+        assert "1 exit event" in out
+        assert "[1] exit" in out
+        assert "/bin/sh" not in out
+
+    def test_summarise_exec_surfaces_shells_first(self):
+        from sentinel_agents.tools.tetragon_events import _summarise_events
+
+        raw = (
+            '{"process_exec":{"process":{"pid":1,"binary":"/usr/bin/nginx","pod":{"namespace":"n","name":"p"}}}}\n'
+            '{"process_exec":{"process":{"pid":2,"binary":"/usr/bin/sh","pod":{"namespace":"n","name":"p"}}}}\n'
+        )
+        out = _summarise_events(raw, "exec")
+        # The shell event (pid 2) is sorted BEFORE the nginx event (pid 1).
+        assert out.index("/usr/bin/sh") < out.index("/usr/bin/nginx")
+
+    def test_summarise_empty(self):
+        from sentinel_agents.tools.tetragon_events import _summarise_events
+
+        assert "No Tetragon" in _summarise_events("", "exec")
+
+    def test_summarise_no_matching_type(self):
+        from sentinel_agents.tools.tetragon_events import _summarise_events
+
+        raw = '{"process_exec":{"process":{"pid":1,"binary":"/bin/sh"}}}'
+        assert "none matching" in _summarise_events(raw, "dns")
+
+
+class TestTetragonKubectlFallback:
+    """T4.2 live path: kubectl logs ds/tetragon -c export-stdout."""
+
+    def test_fallback_reads_daemonset_logs(self, monkeypatch):
+        from sentinel_agents.tools import tetragon_events as te
+
+        calls: list[list[str]] = []
+
+        def _fake_run(cmd, timeout=60):
+            calls.append(cmd)
+            if "get" in cmd:
+                return "pod/tetragon-abc\npod/tetragon-def\n"
+            return (
+                '{"process_exec":{"process":{"pid":42,"binary":"/usr/bin/sh",'
+                '"arguments":"/bin/sh -c whoami","pod":{"namespace":"sentinel",'
+                '"name":"test-api-1"}}}}\n'
+            )
+
+        monkeypatch.setattr(te, "run_subprocess", _fake_run)
+        out = te._kubectl_events("exec", 50)
+        # First call: enumerate agent pods.  Then one logs call per pod.
+        assert calls[0][:2] == ["kubectl", "get"]
+        assert any("tetragon-abc" in c and "export-stdout" in c for c in calls)
+        assert "/usr/bin/sh" in out
+        assert "test-api-1" in out
+
+    def test_fallback_no_pods(self, monkeypatch):
+        from sentinel_agents.tools import tetragon_events as te
+
+        monkeypatch.setattr(te, "run_subprocess", lambda *a, **k: "(no output)")
+        out = te._kubectl_events("exec", 50)
+        assert "No Tetragon agent pods" in out
+
+    def test_fallback_propagates_kubectl_error(self, monkeypatch):
+        from sentinel_agents.tools import tetragon_events as te
+
+        monkeypatch.setattr(
+            te, "run_subprocess", lambda *a, **k: "❌ kubectl not found on PATH"
+        )
+        out = te._kubectl_events("exec", 50)
+        # The pod-enumeration call failed → no agent pods were found.
+        assert "No Tetragon agent pods" in out
+
+    def test_fallback_skips_unreadable_pod_logs(self, monkeypatch):
+        from sentinel_agents.tools import tetragon_events as te
+
+        calls = []
+
+        def _fake_run(cmd, timeout=60):
+            calls.append(cmd)
+            if "get" in cmd:
+                return "pod/tetragon-abc\n"
+            return "❌ kubectl timed out after 30s."
+
+        monkeypatch.setattr(te, "run_subprocess", _fake_run)
+        out = te._kubectl_events("exec", 50)
+        assert "no export-stdout logs were readable" in out
+
+    def test_live_tool_uses_fallback_when_no_http_bridge(self, monkeypatch):
+        """No HTTP bridge (error object from _httpx_get) → kubectl fallback."""
+        from sentinel_agents.tools import tetragon_events as te
+
+        # _httpx_get returns its error-JSON (never raises) when the
+        # bridge is unreachable — the tool must detect it and fall back.
+        monkeypatch.setattr(
+            te, "_httpx_get", lambda *a, **k: '{"error": "connection refused", "url": "x"}'
+        )
+        monkeypatch.setattr(
+            te, "run_subprocess",
+            lambda *a, **k: '{"process_exec":{"process":{"pid":7,"binary":"/bin/sh","pod":{"namespace":"s","name":"p"}}}}'
+            if "get" in a[0]
+            else '{"process_exec":{"process":{"pid":7,"binary":"/bin/sh","pod":{"namespace":"s","name":"p"}}}}',
+        )
+        out = te.tetragon_events.invoke({"event_type": "exec", "limit": 5})
+        assert "/bin/sh" in out
+        assert "BLOCKED" not in out
+        assert "connection refused" not in out
+
+
+# ════════════════════════════════════════════════════════════
 # Registration — all four security tools are discoverable
 # ════════════════════════════════════════════════════════════
 class TestSecurityToolsRegistration:

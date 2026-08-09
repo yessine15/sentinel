@@ -524,11 +524,32 @@
   the sentinel traffic flow map (demo-api → otel-collector:4318);
   cilium connectivity test subset green.  Acceptance: pods communicate
   + cilium status OK + Hubble flow map.
+- [x] **T4.2 Install Tetragon** (2026-08-09): wrapper chart
+  gitops/components/tetragon/ (cilium/tetragon 1.7.0, JSON export via
+  hubble-export-stdout sidecar) + starter TracingPolicy
+  policies/suspicious-exec.yaml (kprobe security_bprm_check +
+  matchBinaries In [bash/sh/dash/ash]); install via new
+  scripts/install-tetragon.sh (bootstrap infra, NOT ArgoCD).  Live-
+  wired the T3.2 tetragon_events tool: nested export format support
+  ({"process_exec":{...}}), kubectl --prefix stripping, type filtering,
+  exec sorted with shells first, kubectl fallback (per-pod logs — DS
+  --tail/--since aggregation unreliable on kind+containerd), HTTP
+  bridge error-JSON detection (real bug: _httpx_get never raises, its
+  {"error":...} was summarised as an event instead of falling back).
+  REAL BUG (kernel 7.0.12 + Tetragon 1.7.0): policy selectors don't
+  fire (matchArgs string extraction empty, matchBinaries never
+  matches) — base process_exec tracing exports every exec with pod
+  context, so the tool's client-side shell filter covers the
+  acceptance; documented in the policy file.  Version 0.12.0; 619
+  passed / 10 skipped (+14 tetragon tests).  LIVE acceptance:
+  kubectl exec test-api -- sh -c "echo pwned; id" → tetragon_events
+  returns "exec ns=sentinel pod=test-api binary=/usr/bin/sh args=-c
+  echo pwned; id" — visible to the Security Agent.
 - [ ] Phase 5: Polish, evals, portfolio.
 
-> **We are at:** Phase 4 in progress.  T4.1 done.  T4.2 next.
-> **Next up:** T4.2 — Install Tetragon (eBPF runtime security events;
-> starter policy logging suspicious exec; expose events to the agent).
+> **We are at:** Phase 4 in progress.  T4.1–T4.2 done.  T4.3 next.
+> **Next up:** T4.3 — Install Falco (rule-based alerts; ship alerts to
+> Loki + Alertmanager; see a Falco rule fire in Grafana).
 > **Foundation:** kind cluster (inotify limits raised — required by
 > Cilium), ingress-nginx, ArgoCD (App-of-Apps), full observability stack
 > (Prometheus, Alertmanager, Grafana, Loki, Tempo), Qdrant vector DB,

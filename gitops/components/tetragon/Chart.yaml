@@ -1,0 +1,25 @@
+# =============================================================
+# Tetragon — Helm chart wrapper for Sentinel (T4.2)
+#
+# Tetragon is Cilium's eBPF runtime security observability: it
+# captures raw kernel events (process exec, network, file access)
+# with full pod/namespace context and can enforce in-kernel
+# policies.  Sentinel only OBSERVES — the Security Agent reads
+# events via the tetragon_events tool.
+#
+# This Chart.yaml declares a dependency on the upstream Cilium
+# Tetragon Helm chart.  Bootstrap infrastructure (like Cilium
+# itself): installed manually via scripts/install-tetragon.sh,
+# NOT via an ArgoCD Application (the sensor DaemonSet must never
+# be deleted by a GitOps sync while the Security Agent relies on it).
+# =============================================================
+apiVersion: v2
+name: tetragon
+description: Tetragon eBPF runtime security events for Sentinel
+version: 0.1.0
+type: application
+
+dependencies:
+  - name: tetragon
+    version: "1.7.0"
+    repository: https://helm.cilium.io

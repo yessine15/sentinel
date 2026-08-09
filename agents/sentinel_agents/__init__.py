@@ -15,6 +15,9 @@ Phase 3 (T3.8+): Kubebuilder operator scaffold — RemediationPlan CRD
 Phase 3 (T3.12+): Postmortem Agent — drafts the incident writeup after
                  resolution, stores it in Postgres and embeds it into
                  the KB (Qdrant) so /ask retrieves it.
+Phase 4 (T4.2+): Tetragon runtime security — tetragon_events tool live-
+                 wired to the cluster-wide eBPF export stream (kubectl
+                 fallback when no HTTP bridge).
 """
 
-__version__ = "0.11.0"
+__version__ = "0.12.0"

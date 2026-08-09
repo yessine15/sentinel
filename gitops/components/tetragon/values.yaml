@@ -1,0 +1,51 @@
+# =============================================================
+# Tetragon values for Sentinel (local kind, T4.2)
+#
+# eBPF runtime security events with JSON export.  The agent writes
+# NDJSON to /var/run/cilium/tetragon/tetragon.log (hostPath) and
+# the hubble-export-stdout sidecar tails it to the pod's stdout —
+# so `kubectl logs ds/tetragon -c export-stdout` is the cluster-wide
+# event stream the Security Agent's tetragon_events tool reads.
+#
+# Chart: cilium/tetragon (https://helm.cilium.io)
+# =============================================================
+
+# Override the upstream tetragon subchart values.
+tetragon:
+  # --- Cluster identity -----------------------------------------
+  clusterName: sentinel
+
+  # --- Event export (stdout sidecar) ----------------------------
+  # Default mode: the agent writes NDJSON to tetragon.log and the
+  # hubble-export-stdout sidecar streams it to stdout.  Kept on
+  # purpose — the Security Agent reads `kubectl logs ds/tetragon
+  # -c export-stdout` for the cluster-wide event stream.
+  exportFilename: tetragon.log
+
+  # --- gRPC API (defaults: unix socket inside the pod) ----------
+  # Kept at the chart default (unix:///var/run/tetragon/tetragon.sock).
+  # The tetragon CLI in the agent pod uses it for debugging
+  # (`kubectl exec <tetragon-pod> -- tetragon events`).
+
+  # --- Resources (modest for local dev) -------------------------
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+tetragonOperator:
+  # Single replica operator for the local cluster.
+  replicas: 1
+
+# Export sidecar resource requests.
+export:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi

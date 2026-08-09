@@ -1,0 +1,52 @@
+# =============================================================
+# Tetragon starter policy: suspicious exec (T4.2)
+#
+# Logs process executions of shell binaries (bash / sh / dash /
+# ash) anywhere in the cluster.  A shell spawning inside a workload
+# pod is a classic runtime-security signal (reverse shells, kubectl
+# exec abuse, crypto-miners) — the Security Agent investigates
+# these via the tetragon_events tool.
+#
+# Matcher: kprobe on security_bprm_check + matchBinaries (the
+# binary being executed — no argument-pointer extraction needed,
+# which is unreliable on newer kernels).
+#
+# NOTE (kernel 7.0.x + Tetragon 1.7.0): selector-based matching
+# (matchArgs/matchBinaries) currently does NOT fire — arg string
+# extraction returns empty and matchBinaries never matches (a
+# Tetragon-1.7.0-on-new-kernel bug).  The policy loads cleanly and
+# documents the intent; on this kernel the events are covered by
+# Tetragon's BASE process_exec tracing, which exports EVERY exec
+# with pod context — the tetragon_events tool filters that stream
+# for shell binaries client-side.  On kernels where selectors work,
+# this policy additionally tags the matched execs.
+#
+# Applied AFTER the tetragon Helm chart is installed (the CRD must
+# exist first):
+#
+#   kubectl apply -f gitops/components/tetragon/policies/
+#
+# Tetragon "observes" here: the policy only SELECTS events for
+# export — it does not enforce/block anything.
+# =============================================================
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: "suspicious-exec"
+spec:
+  kprobes:
+    - call: "security_bprm_check"
+      syscall: false
+      args:
+        - index: 0
+          type: "filename"
+      selectors:
+        - matchBinaries:
+            - operator: "In"
+              values:
+                - "/bin/bash"
+                - "/usr/bin/bash"
+                - "/bin/sh"
+                - "/usr/bin/sh"
+                - "/bin/dash"
+                - "/bin/ash"
