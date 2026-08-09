@@ -1,0 +1,45 @@
+# =============================================================
+# ClusterRole — least privilege (T3.10): the operator only reads
+# RemediationPlans and writes their status; action verbs are
+# scoped to exactly what the executor needs.
+# =============================================================
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sentinel-operator-role
+  labels:
+    app.kubernetes.io/part-of: sentinel
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["sentinel.io"]
+    resources: ["remediationplans"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["sentinel.io"]
+    resources: ["remediationplans/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["sentinel.io"]
+    resources: ["remediationplans/finalizers"]
+    verbs: ["update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: sentinel-operator-rolebinding
+  labels:
+    app.kubernetes.io/part-of: sentinel
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: sentinel-operator-role
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.serviceAccountName }}
+    namespace: {{ .Values.namespace }}

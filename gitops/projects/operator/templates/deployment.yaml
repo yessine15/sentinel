@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sentinel-operator
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: sentinel-operator
+    app.kubernetes.io/part-of: sentinel
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sentinel-operator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sentinel-operator
+        app.kubernetes.io/part-of: sentinel
+    spec:
+      serviceAccountName: {{ .Values.serviceAccountName }}
+      containers:
+        - name: manager
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: OPERATOR_COOLDOWN_SECONDS
+              value: "{{ .Values.cooldownSeconds }}"
+            - name: OPERATOR_VERIFY_INTERVAL_SECONDS
+              value: "{{ .Values.verifyIntervalSeconds }}"
+          resources:
+            requests:
+              cpu: {{ .Values.resources.requests.cpu }}
+              memory: {{ .Values.resources.requests.memory }}
+            limits:
+              cpu: {{ .Values.resources.limits.cpu }}
+              memory: {{ .Values.resources.limits.memory }}

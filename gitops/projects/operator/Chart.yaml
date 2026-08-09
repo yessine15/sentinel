@@ -1,0 +1,19 @@
+# =============================================================
+# sentinel-operator — Helm chart (T3.11)
+#
+# Deploys the RemediationPlan operator (Kubebuilder) into the
+# cluster with least-privilege RBAC, managed end-to-end by ArgoCD.
+#
+# The chart is self-contained: it creates the namespace, the
+# ServiceAccount, the ClusterRole + ClusterRoleBinding (mirroring
+# operator/config/rbac/role.yaml), and the Deployment.
+# =============================================================
+apiVersion: v2
+name: sentinel-operator
+description: Sentinel RemediationPlan operator — reconciles approved plans (Proposed → Approved → Applied → Verified → Closed).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+maintainers:
+  - name: yessine15
+    url: https://github.com/yessine15

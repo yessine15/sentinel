@@ -1,0 +1,30 @@
+# =============================================================
+# sentinel-operator Helm values (local dev / kind)
+#
+# image.tag tracks the locally-built operator image; the GitHub
+# Actions build pipeline will push to GHCR for real deployments.
+# =============================================================
+
+# Namespace the operator runs in.
+namespace: operator-system
+
+image:
+  repository: ghcr.io/yessine15/sentinel-operator
+  tag: "local"
+  pullPolicy: IfNotPresent
+
+# Operator lifecycle tuning (env vars consumed by the controller).
+cooldownSeconds: 60
+verifyIntervalSeconds: 5
+
+# Resources for local dev — keep tiny.
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+# Service account name used by the operator Deployment.
+serviceAccountName: sentinel-operator
