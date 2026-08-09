@@ -659,12 +659,41 @@ and verifies the fix, and a postmortem lands in the KB.
 gate deploys; images are signed and scanned. Security autopilot demo works.
 
 ## M4.1 Runtime security
-- [ ] **T4.1 Install Cilium (replace default CNI)**
+- [x] **T4.1 Install Cilium (replace default CNI)**
   - Goal: eBPF-based networking + network policies.
   - Steps: tear down existing CNI; install Cilium via Helm under
     `gitops/components/cilium/`; verify connectivity with `cilium status`.
   - Done when: pods still communicate; `cilium status` OK; Hubble UI shows
     a traffic flow map.
+  - Implemented: wrapper Helm chart `gitops/components/cilium/`
+    (Chart.yaml dependency on cilium/cilium 1.20.0 + values.yaml: cluster
+    identity sentinel/1, kubeProxyReplacement=false [kube-proxy kept —
+    least-risk migration; 1.20 requires a boolean, not "disabled"],
+    ipam=kubernetes, routingMode=native + autoDirectNodeRoutes +
+    **ipv4NativeRoutingCIDR=10.244.0.0/16** [agent fatal-errors without
+    it], Hubble enabled: relay + UI + flow metrics).  Cilium is bootstrap
+    infra (like observability/ and ingress-nginx/) — installed manually
+    via `scripts/install-cilium.sh` (new), NOT an ArgoCD Application,
+    because a GitOps sync/rollback must never be able to delete the CNI.
+    Migration: `kubectl delete ds kindnet` + `kubectl delete pods -A --all`
+    → all 45 pods recreated with Cilium IPs.  **Real cluster bug found**:
+    the Cilium agent crashed with `couldn't initialize inotify: too many
+    open files` on the 42-day-old kind nodes
+    (fs.inotify.max_user_instances=128 default); fixed by raising
+    max_user_instances=1024 + max_user_watches=524288 on all nodes via
+    `sysctl -w` — and **made permanent in `scripts/kind-up.sh`** so fresh
+    clusters get it automatically.  Also fixed pre-existing ingress drift
+    (controller had lost its ingress-ready nodeSelector → landed on a
+    worker where host ports aren't mapped; re-applied the gitops values →
+    back on the control-plane, host-side sentinel.local = 200).
+    Verification: `cilium status` all OK (agent 3/3, envoy 3/3, operator,
+    hubble relay + UI); cross-namespace pod connectivity proven
+    (curl pod → qdrant.qdrant.svc healthz OK, litellm.litellm.svc models
+    OK, ingress in-cluster 200); Hubble UI live at :12000 showing the
+    **sentinel traffic flow map** (demo-api → opentelemetry-collector:4318)
+    with flows table; full `cilium connectivity test` subset
+    (pod/node matrix) green.  Acceptance met: pods communicate, cilium
+    status OK, Hubble UI shows a traffic flow map.
 
 - [ ] **T4.2 Install Tetragon**
   - Goal: eBPF runtime security events.

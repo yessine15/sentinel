@@ -1,0 +1,25 @@
+# =============================================================
+# Cilium — Helm chart wrapper for Sentinel (T4.1)
+#
+# Replaces the default kind CNI (kindnet) with Cilium: eBPF-based
+# networking + network policies + Hubble observability.
+#
+# This Chart.yaml declares a dependency on the upstream Cilium Helm
+# chart so that ArgoCD (or a local `helm dependency update && helm
+# install`) can deploy Cilium using our values overrides.
+#
+# NOTE: like observability/ and ingress-nginx/, Cilium is bootstrap
+# infrastructure — it is installed manually (helm install), NOT via
+# an ArgoCD Application, because the CNI must never be deleted or
+# drifted by a GitOps sync (that would cut the cluster's network).
+# =============================================================
+apiVersion: v2
+name: cilium
+description: Cilium eBPF CNI + network policies + Hubble for Sentinel
+version: 0.1.0
+type: application
+
+dependencies:
+  - name: cilium
+    version: "1.20.0"
+    repository: https://helm.cilium.io

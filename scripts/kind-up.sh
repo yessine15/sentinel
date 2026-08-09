@@ -86,6 +86,16 @@ create_cluster() {
     log "Waiting for nodes to be Ready ..."
     kubectl wait --for=condition=Ready nodes --all --timeout=120s
 
+    # Raise inotify limits — required by Cilium (T4.1). The default
+    # fs.inotify.max_user_instances=128 is too low for a busy cluster;
+    # the Cilium agent fatal-errors with "too many open files" otherwise.
+    log "Raising fs.inotify limits on all nodes (required by Cilium)..."
+    for node in $(kind get nodes --name "$CLUSTER_NAME"); do
+        docker exec "$node" sysctl -w \
+            fs.inotify.max_user_instances=1024 \
+            fs.inotify.max_user_watches=524288 >/dev/null
+    done
+
     log "Cluster is up. Nodes:"
     kubectl get nodes -o wide
 }

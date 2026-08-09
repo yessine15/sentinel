@@ -503,18 +503,39 @@
   Required value"); fixed with well-formed JSON + StrategicMergePatch
   (merge by container name) — patch action now live-verified (never
   live-tested before; T3.9 only tested scale).
-- [ ] Phase 4: Security hardening.
+- [x] **T4.1 Install Cilium (replace default CNI)** (2026-08-09): Cilium
+  1.20.0 installed via wrapper chart `gitops/components/cilium/`
+  (Chart.yaml + values.yaml: cluster sentinel/1,
+  kubeProxyReplacement=false [1.20 wants boolean], ipam=kubernetes,
+  native routing + ipv4NativeRoutingCIDR=10.244.0.0/16 [agent
+  fatal-errors without it], Hubble relay + UI + flow metrics).
+  Bootstrap infra → manual install via new `scripts/install-cilium.sh`,
+  NOT an ArgoCD app (a GitOps sync must never delete the CNI).
+  Migration: deleted kindnet DS + recreated all pods → 45 pods on
+  Cilium IPs.  REAL BUG: agent crashed "couldn't initialize inotify:
+  too many open files" (kind nodes default
+  fs.inotify.max_user_instances=128) → raised to 1024/524288 via
+  sysctl on all nodes + **permanent fix added to scripts/kind-up.sh**.
+  Also re-applied ingress-nginx gitops values (controller had lost its
+  ingress-ready nodeSelector → was on a worker with no host port
+  mapping; now back on control-plane, sentinel.local = 200).
+  Verified: cilium status all OK; cross-namespace pod connectivity
+  (curl pod → qdrant + litellm services OK); Hubble UI at :12000 shows
+  the sentinel traffic flow map (demo-api → otel-collector:4318);
+  cilium connectivity test subset green.  Acceptance: pods communicate
+  + cilium status OK + Hubble flow map.
 - [ ] Phase 5: Polish, evals, portfolio.
 
-> **We are at:** Phase 3 COMPLETE — T3.1–T3.12 done.  Phase 4
-> (Security Hardening) next.
-> **Next up:** T4.1 — Install Cilium (replace default CNI).
-> **Foundation:** kind cluster, ingress-nginx, ArgoCD (App-of-Apps), full
-> observability stack (Prometheus, Alertmanager, Grafana, Loki, Tempo),
-> Qdrant vector DB, Postgres 16 + pgvector, LiteLLM gateway at
-> http://llm.local, FastAPI `/ask` + WebSocket `/chat/ws` + `/plans`
-> (approve/reject) + `/operator/plans` (executor write path) endpoints,
-> LangGraph multi-agent graph (triage → SRE / Knowledge(RAG) / Security /
+> **We are at:** Phase 4 in progress.  T4.1 done.  T4.2 next.
+> **Next up:** T4.2 — Install Tetragon (eBPF runtime security events;
+> starter policy logging suspicious exec; expose events to the agent).
+> **Foundation:** kind cluster (inotify limits raised — required by
+> Cilium), ingress-nginx, ArgoCD (App-of-Apps), full observability stack
+> (Prometheus, Alertmanager, Grafana, Loki, Tempo), Qdrant vector DB,
+> Postgres 16 + pgvector, LiteLLM gateway at http://llm.local, FastAPI
+> `/ask` + WebSocket `/chat/ws` + `/plans` (approve/reject) +
+> `/operator/plans` (executor write path) endpoints, LangGraph
+> multi-agent graph (triage → SRE / Knowledge(RAG) / Security /
 > Cost specialists + incident loop: parallel fan-out → synthesis →
 > planner → human approval gate → Executor Agent) with 12 allow-listed
 > tools (kubectl get/describe, PromQL, LogQL, RAG search, rag_evidence,

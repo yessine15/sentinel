@@ -1,0 +1,57 @@
+# =============================================================
+# Cilium values for Sentinel (local kind, T4.1)
+#
+# Replaces kindnet with Cilium 1.20.0: eBPF data path, network
+# policies ready for T4.2/T4.7, Hubble observability enabled.
+#
+# Chart: cilium/cilium (https://helm.cilium.io)
+# =============================================================
+
+# Override the upstream cilium subchart values.
+cilium:
+  # --- Cluster identity -----------------------------------------
+  cluster:
+    name: sentinel
+    id: 1
+
+  # --- kube-proxy -------------------------------------------------
+  # Keep kube-proxy (kubeProxyReplacement=false): the least risky
+  # setup for an existing cluster — kube-proxy keeps doing Service
+  # LB/NAT while Cilium owns pod networking + network policies.
+  # (T4.1 goal is eBPF networking + policies; kube-proxy replacement
+  # can come later as a stretch.)
+  kubeProxyReplacement: false
+
+  # --- Operator (single replica for the local cluster) ----------
+  operator:
+    replicas: 1
+
+  # --- IPAM / routing -------------------------------------------
+  # kind defaults: pod CIDR 10.244.0.0/16, native routing (nodes
+  # share one L2), Kubernetes IPAM.  Explicit for clarity.
+  ipam:
+    mode: kubernetes
+  routingMode: native
+  autoDirectNodeRoutes: true
+  # Required with native routing + k8s IPAM: the cluster-wide pod CIDR
+  # (without this the agent fails: "native routing cidr must be
+  # configured").
+  ipv4NativeRoutingCIDR: 10.244.0.0/16
+
+  # --- Hubble observability (T4.1 acceptance: UI flow map) -------
+  hubble:
+    enabled: true
+    relay:
+      enabled: true
+      replicas: 1
+    ui:
+      enabled: true
+      replicas: 1
+    metrics:
+      enabled:
+        - drop
+        - tcp
+        - flow
+        - port-distribution
+        - icmp
+        - http
