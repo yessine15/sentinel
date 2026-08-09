@@ -61,14 +61,26 @@ def _resume_after_decision(plan_id: str, decision: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=f"Plan {plan_id} not found")
 
     try:
-        from sentinel_agents.graph import resume_plan_graph
+        # T3.7: the detailed resume also runs the Executor Agent after an
+        # approval, so the response reports the RemediationPlan object.
+        from sentinel_agents.graph import resume_plan_graph_detailed
 
-        approval_status = resume_plan_graph(plan.to_dict(), decision)
+        outcome = resume_plan_graph_detailed(plan.to_dict(), decision)
+        approval_status = outcome["approval_status"]
+        executor_status = outcome.get("executor_status", "")
+        remediation_plan = outcome.get("remediation_plan", {})
     except Exception as exc:  # pragma: no cover - agent graph import edge case
         logger.warning("resume_plan_graph failed for %s: %s", plan_id, exc)
         approval_status = decision  # DB state is authoritative anyway
+        executor_status = ""
+        remediation_plan = {}
 
-    return {**_plan_response(plan), "approval_status": approval_status}
+    return {
+        **_plan_response(plan),
+        "approval_status": approval_status,
+        "executor_status": executor_status,
+        "remediation_plan": remediation_plan,
+    }
 
 
 # ---------------------------------------------------------------------------

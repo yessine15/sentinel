@@ -13,6 +13,9 @@ T3.4: RAG Agent specialist — rag_evidence tool wrapping the Phase 1
 T3.5: Incident loop — triage "incident" category → parallel fan-out to
       SRE + Security + RAG specialists → synthesis → planner → approval
       (pauses awaiting human input).
+T3.7: Executor Agent — the ONLY agent that can act.  Runs after
+      approval in the resume graph; emits a RemediationPlan object
+      (allow-listed action verbs) via the operator bridge.
 
 Flow:
     START → triage_agent → route_to_specialist
@@ -46,7 +49,10 @@ Flow:
                                                                              ↓
                                                                           approval
                                                                              ↓
-                                                                          END (awaiting)
+Resume graph (T3.7):  approval → approved? → executor → executor_tools
+                                                     ↓
+                                                  END (remediation_plan
+                                                       in state)
 """
 
 from __future__ import annotations
@@ -106,6 +112,10 @@ class AgentState(TypedDict):
             (T3.5).
         approval_status: ``"awaiting_approval"`` / ``"approved"`` /
             ``"rejected"`` — set by ``approval`` (T3.5).
+        remediation_plan: The RemediationPlan object created by the
+            Executor Agent after approval (T3.7).
+        executor_status: ``"pending"`` / ``"created"`` / ``"preview"`` /
+            ``"blocked"`` — set by the Executor Agent (T3.7).
     """
 
     messages: Annotated[list[BaseMessage], add_messages]
@@ -118,6 +128,9 @@ class AgentState(TypedDict):
     synthesis: str
     plan: dict[str, Any]
     approval_status: str
+    # ── T3.7 executor channels ──
+    remediation_plan: dict[str, Any]
+    executor_status: str
 
 
 # ─────────────────────────────────────────────────────────────
@@ -178,6 +191,20 @@ RAG_TOOLS: list = [
 ]
 """The RAG Agent's dedicated toolset — ranked evidence retrieval with
 citations (rag_evidence) plus the legacy formatted search (rag_search)."""
+
+# T3.7: the Executor Agent's toolset.  It has EXACTLY ONE tool — the
+# only write tool in the entire system.  Everything the executor does
+# goes through create_remediation_plan (allow-listed action verbs →
+# RemediationPlan object via the operator bridge).  The executor never
+# runs kubectl directly, and it has no read tools: investigation is the
+# specialists' job; the executor only acts on an approved plan.
+_EXECUTOR_TOOL_NAMES = frozenset({
+    "create_remediation_plan",
+})
+EXECUTOR_TOOLS: list = [
+    t for t in ALLOWED_TOOLS if t.name in _EXECUTOR_TOOL_NAMES
+]
+"""The Executor Agent's dedicated toolset — exactly one write tool."""
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1182,20 +1209,201 @@ def approval_node(state: AgentState) -> dict[str, Any]:
 # ─────────────────────────────────────────────────────────────
 # Resume graph (T3.6) — continue past the human gate
 # ─────────────────────────────────────────────────────────────
+def _extract_executor_result(messages: list) -> dict[str, Any] | None:
+    """Parse the create_remediation_plan ToolMessage into a result dict.
+
+    The tool returns JSON like::
+
+        {"status": "Created"|"Preview", "name": "rp-...",
+         "namespace": "sentinel", "dry_run": false, ...}
+
+    Returns the parsed dict, or ``None`` if the tool hasn't run yet /
+    the output is not parseable.
+    """
+    for m in reversed(messages):
+        if not isinstance(m, ToolMessage):
+            continue
+        if getattr(m, "name", "") != "create_remediation_plan":
+            continue
+        content = m.content if hasattr(m, "content") else str(m)
+        try:
+            payload = json.loads(content)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(payload, dict) and payload.get("name"):
+            return payload
+    return None
+
+
+def _executor_tool_has_run(messages: list) -> bool:
+    """True when create_remediation_plan already produced a ToolMessage.
+
+    Used to stop the executor loop even when the tool returned an error
+    (non-JSON) — without this the resume graph would loop forever.
+    """
+    for m in reversed(messages):
+        if isinstance(m, ToolMessage) and getattr(m, "name", "") == "create_remediation_plan":
+            return True
+    return False
+
+
+def executor_agent_node(state: AgentState) -> dict[str, Any]:
+    """The Executor Agent (T3.7) — the ONLY agent that can act.
+
+    Runs in the resume graph after ``approval`` when the human has
+    approved the plan.  It is deliberately *deterministic* (no LLM):
+    the approved plan is already structured JSON, so converting it to a
+    RemediationPlan spec is mechanical — and mechanical conversion is
+    exactly what we want from the one component that can write to the
+    cluster.
+
+    Behaviour:
+    1. If ``approval_status != "approved"`` → nothing happens.
+    2. First pass: records the dry-run proposal (the RemediationPlan
+       manifest) in the scratchpad, then requests the tool
+       ``create_remediation_plan`` (dry_run=False) via a structured
+       tool call.
+    3. After the tool runs: parses the result, stores it in
+       ``state["remediation_plan"]`` + scratchpad, and stops (no more
+       tool calls → the resume graph ends).
+    """
+    sp = dict(state.get("scratchpad", {}))
+    sp["executor_visited"] = True
+    sp["triage_category"] = state.get("routing", "incident")
+
+    # Guard 1 — only act on approved plans.
+    if state.get("approval_status") != "approved":
+        sp["executor_status"] = "skipped"
+        return {"scratchpad": sp, "executor_status": "skipped"}
+
+    plan = state.get("plan") or sp.get("plan") or sp.get("pending_plan", {})
+    incident = state.get("incident") or sp.get("incident", "")
+
+    # Guard 2 — if the tool already ran (success OR error), do NOT emit
+    # more tool calls (otherwise the resume graph would loop forever).
+    result = _extract_executor_result(state.get("messages", []))
+    if result is not None:
+        sp["executor_status"] = "created" if result.get("status") == "Created" else "preview"
+        sp["remediation_plan"] = result
+        sp["remediation_plan_name"] = result.get("name", "")
+        return {
+            "scratchpad": sp,
+            "executor_status": sp["executor_status"],
+            "remediation_plan": result,
+        }
+    if _executor_tool_has_run(state.get("messages", [])):
+        # The tool ran but its output was not parseable (e.g. the
+        # operator bridge rejected the plan) — stop, do not retry.
+        last_tool = None
+        for m in reversed(state.get("messages", [])):
+            if isinstance(m, ToolMessage) and getattr(m, "name", "") == "create_remediation_plan":
+                last_tool = m
+                break
+        raw = last_tool.content if last_tool is not None else "unknown error"
+        sp["executor_status"] = "blocked"
+        sp["executor_error"] = str(raw)[:500]
+        return {"scratchpad": sp, "executor_status": "blocked"}
+
+    # Build the RemediationPlan manifest (dry-run proposal first).
+    try:
+        from sentinel_api.remediation import build_remediation_plan, to_yaml
+
+        manifest = build_remediation_plan(
+            plan,
+            incident=incident,
+            dry_run=False,
+            plan_ref=str(sp.get("plan_ref", "")),
+        )
+        proposal_yaml = to_yaml(manifest)
+        manifest_name = manifest["metadata"]["name"]
+    except Exception:  # sentinel_api unavailable — inline minimal proposal
+        import uuid as _uuid
+
+        target = ""
+        steps = plan.get("steps", [])
+        if steps:
+            target = str(steps[0].get("target", "plan")).replace("/", "-")[:40]
+        manifest_name = f"rp-{target or 'plan'}-{_uuid.uuid4().hex[:8]}"
+        proposal_yaml = (
+            "apiVersion: sentinel.io/v1\n"
+            "kind: RemediationPlan\n"
+            f"metadata:\n  name: {manifest_name}\n  namespace: sentinel\n"
+            "spec:\n"
+            f"  incident: {str(incident)[:120]}\n"
+            f"  priority: {plan.get('priority', 'medium')}\n"
+            f"  rationale: {str(plan.get('rationale', ''))}\n"
+            "  dryRun: false\n"
+            "  steps:\n"
+            + "\n".join(
+                f"    - action: {s.get('action', '')}\n"
+                f"      target: {s.get('target', '')}"
+                for s in plan.get("steps", [])
+                if isinstance(s, dict)
+            )
+        )
+
+    # The dry-run proposal is recorded for the audit trail.
+    sp["executor_proposal"] = proposal_yaml
+    sp["executor_status"] = "pending"
+
+    request = {
+        "name": "create_remediation_plan",
+        "args": {"plan": plan, "incident": incident, "dry_run": False},
+        "id": f"call_executor_{abs(hash(manifest_name)) % 10**8}",
+    }
+    ai_msg = AIMessage(
+        content=(
+            "⚙️ Executor Agent: plan approved. Dry-run proposal recorded "
+            f"for {manifest_name}; creating the RemediationPlan object."
+        ),
+        tool_calls=[request],
+    )
+    return {"messages": [ai_msg], "scratchpad": sp, "executor_status": "pending"}
+
+
+def should_continue_executor(state: AgentState) -> Literal["executor_tools", "__end__"]:
+    """Route executor tool calls through the executor_tools ToolNode."""
+    messages = state.get("messages", [])
+    if not messages:
+        return "__end__"
+    last = messages[-1]
+    if isinstance(last, AIMessage) and last.tool_calls:
+        return "executor_tools"
+    return "__end__"
+
+
+def should_resume(state: AgentState) -> Literal["executor", "__end__"]:
+    """After the approval gate: approved → executor; else end."""
+    if state.get("approval_status") == "approved":
+        return "executor"
+    return "__end__"
+
+
 def build_resume_graph() -> StateGraph:
-    """Build the tiny "resume" graph used after a human decision.
+    """Build the "resume" graph used after a human decision.
 
-    START → approval → END
+    T3.6: START → approval → END.
 
-    The approval node reads ``scratchpad["approval_decision"]`` (set
-    from the persisted plan's status) plus ``scratchpad["plan"]`` and
-    produces the final ``approval_status``.  T3.7 extends this graph
-    with the Executor Agent node after ``approval``.
+    T3.7: START → approval → (approved → executor → executor_tools →
+    executor → END | rejected/awaiting → END).  The executor creates
+    the RemediationPlan object only after human approval.
     """
     builder = StateGraph(AgentState)
     builder.add_node("approval", approval_node)
+    builder.add_node("executor", executor_agent_node)
+    builder.add_node("executor_tools", ToolNode(EXECUTOR_TOOLS))
     builder.set_entry_point("approval")
-    builder.add_edge("approval", END)
+    builder.add_conditional_edges(
+        "approval",
+        should_resume,
+        {"executor": "executor", "__end__": END},
+    )
+    builder.add_conditional_edges(
+        "executor",
+        should_continue_executor,
+        {"executor_tools": "executor_tools", "__end__": END},
+    )
+    builder.add_edge("executor_tools", "executor")
     return builder.compile()
 
 
@@ -1211,6 +1419,9 @@ def resume_plan_graph(plan: dict[str, Any], decision: str) -> str:
     node with the decision injected and returns the final
     ``approval_status``.
 
+    T3.7: an ``"approved"`` decision also runs the Executor Agent,
+    which creates the RemediationPlan object in the cluster.
+
     Args:
         plan: The persisted plan dict (as returned by the plans API).
         decision: ``"approved"`` or ``"rejected"``.
@@ -1220,6 +1431,16 @@ def resume_plan_graph(plan: dict[str, Any], decision: str) -> str:
         ``"rejected"`` (never ``"awaiting_approval"`` here, because a
         decision is always provided).
     """
+    return resume_plan_graph_detailed(plan, decision)["approval_status"]
+
+
+def resume_plan_graph_detailed(plan: dict[str, Any], decision: str) -> dict[str, Any]:
+    """Like :func:`resume_plan_graph` but returns the full outcome.
+
+    Returns a dict with ``approval_status`` plus the executor result
+    (``executor_status`` and ``remediation_plan``) so the plans API /
+    UI can report what actually happened after approval.
+    """
     state: AgentState = {
         "messages": [],
         "tool_calls": [],
@@ -1227,6 +1448,9 @@ def resume_plan_graph(plan: dict[str, Any], decision: str) -> str:
             "approval_decision": decision,
             "plan": plan.get("plan", plan),
             "pending_plan": plan.get("plan", plan),
+            "plan_ref": plan.get("id", ""),
+            "incident": plan.get("incident", ""),
+            "synthesis": plan.get("synthesis", ""),
         },
         "routing": "incident",
         "classification_json": "",
@@ -1234,9 +1458,15 @@ def resume_plan_graph(plan: dict[str, Any], decision: str) -> str:
         "synthesis": plan.get("synthesis", ""),
         "plan": plan.get("plan", plan),
         "approval_status": "",
+        "remediation_plan": {},
+        "executor_status": "",
     }
     result = _resume_graph.invoke(state)
-    return result.get("approval_status", "awaiting_approval")
+    return {
+        "approval_status": result.get("approval_status", "awaiting_approval"),
+        "executor_status": result.get("executor_status", ""),
+        "remediation_plan": result.get("remediation_plan", {}),
+    }
 
 
 # ─────────────────────────────────────────────────────────────

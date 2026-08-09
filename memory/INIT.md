@@ -366,25 +366,54 @@
   the chat UI → plan card appeared (priority high, 2 steps) →
   clicked Approve → card flipped to "✅ Approved — the graph has
   been unblocked." (T3.6 acceptance).
+- [x] **T3.7 Executor Agent** (2026-08-09, v0.9.0): The ONLY agent
+  that can act.  `ALLOWED_EXECUTOR_ACTIONS` in base.py (restart,
+  scale, rollback, cordon, drain, patch, delete_pod, escalate —
+  delete/exec/create/apply blocked) + `validate_executor_action`.
+  `api/sentinel_api/remediation.py`: RemediationPlan spec builder
+  (sentinel.io/v1) + stdlib YAML serializer.  Operator bridge
+  `routes/operator.py` — POST /operator/plans validates actions and
+  applies via `kubectl apply` (the single write path; stub → preview).
+  Tool `create_remediation_plan` (registry #12, category=executor) —
+  the executor's only tool; validates every step action, stub preview,
+  live POST to the bridge.  Resume graph extended: approval →
+  approved → `executor` node → `executor_tools` → END; executor is
+  deterministic (no LLM), records the dry-run proposal in scratchpad,
+  creates the object, stops after the tool runs (no-loop guards incl.
+  tool-error case).  `resume_plan_graph_detailed()` returns
+  approval_status + executor_status + remediation_plan; /plans
+  approve/reject report the created object.  Minimal RemediationPlan
+  CRD installed at `gitops/components/operator/crd.yaml` (T3.8
+  regenerates from Go types).  311 tests pass (up from 276: +35
+  executor/operator), 10 skipped.  Live acceptance: POST /plans →
+  approve → `kubectl get remediationplans` shows the object with
+  spec.priority=high (PASS).  Issues fixed along the way: dead
+  Postgres port-forward hung psycopg (added connect_timeout=5 +
+  probe fallback), YAML serializer didn't quote `: ` in incident text
+  (kubectl 502 → quote colons/brackets/hashes), executor infinite
+  loop on non-JSON tool errors (stop + executor_status=blocked).
 - [ ] Phase 4: Security hardening.
 - [ ] Phase 5: Polish, evals, portfolio.
 
-> **We are at:** Phase 3 in progress. T3.1–T3.6 done. T3.7 next.
-> **Next up:** T3.7 — Executor Agent (the only agent that can act; creates
-> RemediationPlan objects via the operator API; dry-run first).
+> **We are at:** Phase 3 in progress. T3.1–T3.7 done. T3.8 next.
+> **Next up:** T3.8 — Scaffold Kubebuilder operator (RemediationPlan CRD
+> from Go types; `make manifests` / `make install` replaces the minimal
+> CRD installed in T3.7).
 > **Foundation:** kind cluster, ingress-nginx, ArgoCD (App-of-Apps), full
 > observability stack (Prometheus, Alertmanager, Grafana, Loki, Tempo),
 > Qdrant vector DB, Postgres 16 + pgvector, LiteLLM gateway at
 > http://llm.local, FastAPI `/ask` + WebSocket `/chat/ws` + `/plans`
-> (approve/reject) endpoints, LangGraph multi-agent graph (triage → SRE /
-> Knowledge(RAG) / Security / Cost specialists + incident loop: parallel
-> fan-out → synthesis → planner → human approval gate) with 11
-> allow-listed tools (kubectl get/describe, PromQL, LogQL, RAG search,
-> rag_evidence, trivy_scan, cve_lookup, falco_events, tetragon_events,
-> kube_resource_usage), Next.js 15 chat UI with streaming answers +
-> clickable citation chips + remediation plan cards (Approve/Reject),
-> Helm chart + ArgoCD Application for frontend deployment at
-> http://sentinel.local.
+> (approve/reject) + `/operator/plans` (executor write path) endpoints,
+> LangGraph multi-agent graph (triage → SRE / Knowledge(RAG) / Security /
+> Cost specialists + incident loop: parallel fan-out → synthesis →
+> planner → human approval gate → Executor Agent) with 12 allow-listed
+> tools (kubectl get/describe, PromQL, LogQL, RAG search, rag_evidence,
+> trivy_scan, cve_lookup, falco_events, tetragon_events,
+> kube_resource_usage, create_remediation_plan), RemediationPlan CRD
+> (sentinel.io/v1) installed in the cluster, Next.js 15 chat UI with
+> streaming answers + clickable citation chips + remediation plan cards
+> (Approve/Reject), Helm chart + ArgoCD Application for frontend
+> deployment at http://sentinel.local.
 
 ---
 

@@ -178,6 +178,23 @@ ALLOWED_FALCO_OPERATIONS: frozenset[str] = frozenset({
     "health",        # GET /healthz — liveness probe
 })
 
+# ── T3.7 Executor Agent ───────────────────────────────────────
+# The ONLY actions the Executor Agent may encode into a
+# RemediationPlan.  Everything else (delete, exec, create, apply,
+# edit, patch-with-arbitrary-spec, etc.) is blocked: the executor is
+# the single write path in the whole system, so its vocabulary is
+# tiny and every action is a named, auditable verb.
+ALLOWED_EXECUTOR_ACTIONS: frozenset[str] = frozenset({
+    "restart",       # rollout restart a workload (deployment/statefulset/daemonset)
+    "scale",         # scale a workload to N replicas
+    "rollback",      # roll back a workload to a previous revision
+    "cordon",        # mark a node unschedulable (containment)
+    "drain",         # drain a node (respects pod disruption budgets)
+    "patch",         # apply a well-formed patch to a workload (e.g. resource limits)
+    "delete_pod",    # delete a single pod so it is recreated by its controller
+    "escalate",      # no cluster action — escalate to a human on-call
+})
+
 
 # ─────────────────────────────────────────────────────────────
 # Validation helpers
@@ -323,6 +340,22 @@ def validate_falco_operation(operation: str) -> None:
         raise DisallowedQueryError(
             f"Falco operation '{operation}' is NOT allowed. "
             f"Allowed: {sorted(ALLOWED_FALCO_OPERATIONS)}"
+        )
+
+
+def validate_executor_action(action: str) -> None:
+    """Validate one Executor Agent action verb (T3.7).
+
+    The executor is the ONLY agent that can act, so its action
+    vocabulary is strictly allow-listed — anything outside
+    :data:`ALLOWED_EXECUTOR_ACTIONS` is rejected before it can become
+    part of a RemediationPlan.
+    """
+    a = (action or "").lower().strip()
+    if a not in ALLOWED_EXECUTOR_ACTIONS:
+        raise DisallowedQueryError(
+            f"Executor action '{action}' is NOT allowed. "
+            f"Allowed: {sorted(ALLOWED_EXECUTOR_ACTIONS)}"
         )
 
 

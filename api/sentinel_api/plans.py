@@ -172,7 +172,11 @@ class PostgresPlanStore:
     def _connect(self):
         import psycopg  # type: ignore[import-not-found]
 
-        return psycopg.connect(self.dsn)
+        # Short connect timeout: the probe-and-fallback factory must be
+        # able to detect an unreachable DB quickly (psycopg has no
+        # default timeout — without this, a dead port-forward hangs the
+        # whole request for minutes).
+        return psycopg.connect(self.dsn, connect_timeout=5)
 
     def _ensure_table(self) -> None:
         if self._initialized:

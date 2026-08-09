@@ -8,6 +8,8 @@ Phase 3 (T3.4+): RAG Agent specialist with ranked evidence + citations.
 Phase 3 (T3.5+): Incident loop — parallel specialists → synthesis → plan → approval.
 Phase 3 (T3.6+): Human-in-the-loop approval — plans persisted in Postgres,
                  approve/reject API unblocks the graph.
+Phase 3 (T3.7+): Executor Agent — the only agent that can act; emits
+                 RemediationPlan objects via the operator bridge.
 """
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"

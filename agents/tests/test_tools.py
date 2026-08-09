@@ -27,19 +27,21 @@ from sentinel_agents.tools.base import (
 # Registry
 # ════════════════════════════════════════════════════════════
 class TestRegistry:
-    """The tool registry discovers all eleven allow-listed tools.
+    """The tool registry discovers all twelve allow-listed tools.
 
     T2.2: five SRE tools.  T3.2: four security tools (trivy, cve, falco,
     tetragon).  T3.3: one cost tool (kube_resource_usage).  T3.4: one RAG
-    evidence tool (rag_evidence).  Total: eleven.
+    evidence tool (rag_evidence).  T3.7: one executor tool
+    (create_remediation_plan).  Total: twelve.
     """
 
-    def test_get_all_tools_returns_eleven_tools(self):
+    def test_get_all_tools_returns_twelve_tools(self):
         tools = get_all_tools()
-        assert len(tools) == 11  # kubectl_get, describe, promql, logql, rag_search
+        assert len(tools) == 12  # kubectl_get, describe, promql, logql, rag_search
         #                        #   + trivy_scan, cve_lookup, falco_events, tetragon_events
         #                        #   + kube_resource_usage
         #                        #   + rag_evidence
+        #                        #   + create_remediation_plan
 
     def test_get_tool_names_is_sorted(self):
         names = get_tool_names()
@@ -58,6 +60,8 @@ class TestRegistry:
         assert "kube_resource_usage" in names
         # T3.4 RAG tool
         assert "rag_evidence" in names
+        # T3.7 executor tool
+        assert "create_remediation_plan" in names
 
     def test_every_tool_has_name_and_docstring(self):
         for t in get_all_tools():

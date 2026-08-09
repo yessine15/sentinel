@@ -108,10 +108,10 @@ class TestRagEvidenceRegistration:
         assert rag_evidence.description is not None
         assert len(rag_evidence.description) > 50
 
-    def test_tool_count_is_eleven(self):
-        """After T3.4: 11 tools total (5 SRE + 4 security + 1 cost + 1 rag)."""
+    def test_tool_count_is_twelve(self):
+        """After T3.7: 12 tools total (11 + executor tool)."""
         from sentinel_agents.tools import ALLOWED_TOOLS
-        assert len(ALLOWED_TOOLS) == 11
+        assert len(ALLOWED_TOOLS) == 12
 
     def test_rag_tools_categorised(self):
         """Both RAG tools are tagged 'rag'."""

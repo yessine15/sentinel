@@ -62,7 +62,7 @@ class TestGraphBuild:
     def test_sre_tools_are_available(self):
         """The graph uses the real allow-listed tool set (T2.2 + T2.4 + T3.2 + T3.3 + T3.4)."""
         from sentinel_agents.graph import SRE_TOOLS
-        assert len(SRE_TOOLS) >= 11  # 5 SRE + 4 security + 1 cost + 1 rag
+        assert len(SRE_TOOLS) >= 12  # 5 SRE + 4 security + 1 cost + 1 rag + 1 executor
         tool_names = {t.name for t in SRE_TOOLS}
         assert "kubectl_get" in tool_names
         assert "kubectl_describe" in tool_names
@@ -78,6 +78,8 @@ class TestGraphBuild:
         assert "kube_resource_usage" in tool_names
         # T3.4 RAG tool
         assert "rag_evidence" in tool_names
+        # T3.7 executor tool
+        assert "create_remediation_plan" in tool_names
 
     def test_graph_has_triage_entry_point(self):
         """T3.1: The graph starts at triage_agent, not sre_agent."""

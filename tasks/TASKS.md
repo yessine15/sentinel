@@ -434,12 +434,35 @@ the safe execution bridge.
     Approve + Reject buttons; `page.tsx` shows it when a plan is awaiting
     review and updates the status after a decision.
 
-- [ ] **T3.7 Executor Agent**
+- [x] **T3.7 Executor Agent**
   - Goal: the *only* agent that can act; create RemediationPlan objects.
   - Steps: agent emits a `RemediationPlan` spec via the operator API; never
     runs `kubectl` directly; proposes a dry-run first.
   - Done when: approving a plan creates a `RemediationPlan` object in the
     cluster.
+  - Implemented: action allow-list in base.py — `ALLOWED_EXECUTOR_ACTIONS`
+    (restart, scale, rollback, cordon, drain, patch, delete_pod, escalate;
+    delete/exec/create/apply/edit are BLOCKED) + `validate_executor_action`.
+    `api/sentinel_api/remediation.py` — RemediationPlan spec builder
+    (sentinel.io/v1, metadata, spec{incident, priority, rationale, dryRun,
+    approvedBy, planRef, steps[]}) + stdlib YAML serializer.  Operator
+    bridge `api/sentinel_api/routes/operator.py` — POST /operator/plans
+    validates the action allow-list and applies the object via
+    `kubectl apply` (dry_run → client dry-run preview; stub mode →
+    preview text).  Tool `create_remediation_plan` (category="executor",
+    the ONLY write tool in the registry) — validates every step action,
+    stub returns a deterministic preview, live POSTs to the bridge.
+    Resume graph extended: approval → (approved → `executor` node →
+    `executor_tools` ToolNode → executor → END | rejected/awaiting →
+    END); `executor_agent_node` is deterministic (no LLM — the approved
+    plan is already structured JSON), records the dry-run proposal in
+    scratchpad, creates the object with dry_run=False, and stops after
+    the tool runs (guard against infinite loop — including on tool
+    errors).  `resume_plan_graph_detailed()` returns approval_status +
+    executor_status + remediation_plan; the /plans approve/reject
+    endpoints now report the created object.  Minimal RemediationPlan
+    CRD at `gitops/components/operator/crd.yaml` (installed in the
+    cluster; T3.8 regenerates it from Go types).
 
 ## M3.3 The Kubernetes operator
 - [ ] **T3.8 Scaffold Kubebuilder operator**
