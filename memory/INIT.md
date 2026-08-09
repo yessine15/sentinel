@@ -475,14 +475,40 @@
   1→3, Verified (verifiedAt set), Closed exactly after 60s cooldown.
   Acceptance: ArgoCD sentinel-operator Application **Synced + Healthy**,
   Deployment ready 1/1.  Go + Python suites green (311 passed).
+- [x] **T3.12 Postmortem Agent** (2026-08-09): postmortem_agent_node in
+  graph.py = final resume-graph node (approval → executor →
+  executor_tools → executor → postmortem → END); runs only after the
+  executor created the RemediationPlan (else `skipped`, idempotency
+  guard).  (1) reads operator verification state back from the cluster
+  (`_fetch_plan_verification` — kubectl get remediationplan -n ns,
+  never raises; ns bug found + fixed in live smoke); (2) drafts a
+  deterministic markdown writeup (`api/sentinel_api/postmortem.py` —
+  incident, assessment, plan steps, execution, verification, lessons;
+  no LLM); (3) persists to Postgres (`postmortems.py`: postmortems
+  table id/plan_id/incident/content/status drafted|ingested|failed;
+  memory fallback, mirrors plans.py); (4) spawns KB ingestion job
+  (`ingest.py::ingest_postmortem` — chunk + embed + upsert into Qdrant
+  WITHOUT wiping the collection; stable doc id per plan).  New
+  `/postmortems` API (list/get/re-ingest).  `/plans/{id}/approve` now
+  returns postmortem_status + postmortem.  Version 0.11.0.  Tests:
+  605 passed / 10 skipped (agents+api+full rag suite; fixed stale
+  QDRANT_URL/OLLAMA_BASE_URL default tests, installed tree-sitter
+  grammars).  LIVE acceptance: approve patch plan on non-ArgoCD
+  workload test-api (sentinel ns) → plan created → operator applied
+  128Mi→256Mi, Verified (verifiedAt), Closed after 60s cooldown →
+  postmortem ingested → `/ask` about the incident answers citing
+  `postmortems/<id>.md`.  TWO REAL operator bugs found by the live
+  smoke: actionPatch malformed JSON (extra `}` before `]`) + JSON
+  merge patch REPLACES the containers array (wipes image → "image:
+  Required value"); fixed with well-formed JSON + StrategicMergePatch
+  (merge by container name) — patch action now live-verified (never
+  live-tested before; T3.9 only tested scale).
 - [ ] Phase 4: Security hardening.
 - [ ] Phase 5: Polish, evals, portfolio.
 
-> **We are at:** Phase 3 in progress. T3.1–T3.11 done. T3.12 next.
-> **Next up:** T3.12 — Postmortem Agent (draft a postmortem from the
-> incident state + actions + verification, store in Postgres, spawn an
-> ingestion job that embeds it into Qdrant → a /ask query about the
-> incident returns the freshly-written postmortem).
+> **We are at:** Phase 3 COMPLETE — T3.1–T3.12 done.  Phase 4
+> (Security Hardening) next.
+> **Next up:** T4.1 — Install Cilium (replace default CNI).
 > **Foundation:** kind cluster, ingress-nginx, ArgoCD (App-of-Apps), full
 > observability stack (Prometheus, Alertmanager, Grafana, Loki, Tempo),
 > Qdrant vector DB, Postgres 16 + pgvector, LiteLLM gateway at

@@ -70,7 +70,9 @@ class TestOllamaEmbedder:
         # Verify the HTTP call
         mock_httpx.assert_called_once()
         call_args = mock_httpx.call_args
-        assert call_args[0][0] == "http://localhost:11434/api/embed"
+        # In-cluster default: the kind host gateway IP (local dev
+        # overrides via OLLAMA_BASE_URL).
+        assert call_args[0][0] == "http://172.18.0.1:11434/api/embed"
         assert call_args[1]["json"] == {"model": "bge-m3", "input": "hello world"}
 
     def test_embed_batch(self, mock_httpx: MagicMock) -> None:

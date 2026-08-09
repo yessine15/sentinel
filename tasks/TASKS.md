@@ -601,13 +601,51 @@ the safe execution bridge.
     ready 1/1.
 
 ## M3.4 Loop closure
-- [ ] **T3.12 Postmortem Agent**
+- [x] **T3.12 Postmortem Agent**
   - Goal: writes the writeup and feeds it back into the KB.
   - Steps: agent takes the incident state + actions + verification, drafts
     a postmortem markdown; stores in Postgres; spawns an ingestion job that
     embeds it into Qdrant.
   - Done when: after resolving an incident, a `/ask` query about that incident
     returns the freshly-written postmortem.
+  - Implemented: `postmortem_agent_node` in graph.py — the FINAL node of the
+    resume graph (approval → executor → executor_tools → executor →
+    **postmortem** → END), runs only after the Executor created the
+    RemediationPlan (approval_status=approved + executor_status=created;
+    else `skipped`; idempotency guard via scratchpad).  It (1) reads the
+    operator verification state back from the cluster read-only
+    (`_fetch_plan_verification`: `kubectl get remediationplan -n <ns> -o
+    json`, never raises, "unknown" in stub mode — namespace bug found in
+    live smoke and fixed), (2) drafts a deterministic markdown writeup via
+    `api/sentinel_api/postmortem.py` `build_postmortem_markdown()` (no LLM —
+    incident, assessment, plan steps table, executor result, verification,
+    lessons; all facts from state), (3) persists it to Postgres via
+    `api/sentinel_api/postmortems.py` (`postmortems` table: id, plan_id,
+    incident, content, status drafted|ingested|failed, created_at; memory
+    fallback, mirror of plans.py), (4) spawns the KB ingestion job —
+    `rag/sentinel_rag/ingest.py::ingest_postmortem()` chunks + embeds +
+    upserts into Qdrant WITHOUT wiping the collection
+    (`_ensure_collection_if_missing`, stable doc id per plan_id).  New
+    `/postmortems` API (`routes/postmortems.py`): GET list (?status=,
+    ?plan_id=), GET /{id}, POST /{id}/ingest (re-run ingestion for failed
+    writeups).  `/plans/{id}/approve` response now includes
+    `postmortem_status` + `postmortem` (id/content/status/chunks/
+    verification).  AgentState gains `postmortem` + `postmortem_status`
+    channels.  Version 0.11.0.  Tests: 605 passed / 10 skipped (agents +
+    api + full rag suite; rag suite also fixed — stale QDRANT_URL /
+    OLLAMA_BASE_URL default tests updated, tree-sitter grammars installed).
+    **Live acceptance (closed loop)**: approve patch plan on non-ArgoCD
+    workload test-api (sentinel ns) → RemediationPlan created → operator
+    applied limits 128Mi→256Mi (strategic merge), Verified with verifiedAt,
+    Closed after 60s cooldown → postmortem ingested (5 chunks) →
+    `POST /ask` about the incident answers with citations to
+    `postmortems/<id>.md`.  **Two REAL operator bugs found by the live
+    smoke**: actionPatch emitted malformed JSON (extra `}` before `]`) and
+    used JSON merge patch (RFC 7386) which REPLACES the containers array
+    (wiping image → "image: Required value"); fixed by well-formed JSON +
+    `types.StrategicMergePatchType` (merge by container name) — patch
+    action now live-verified end-to-end (it was never live-tested before;
+    T3.9 only tested scale).
 
 ✅ **Phase 3 complete when:** end-to-end self-healing demo works — trigger an
 OOM, Sentinel writes a RemediationPlan, you approve it, the operator applies

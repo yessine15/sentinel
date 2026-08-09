@@ -241,10 +241,14 @@ func (r *RemediationPlanReconciler) actionPatch(ctx context.Context, ns string, 
 	}
 
 	data := []byte(fmt.Sprintf(
-		`{"spec":{"template":{"spec":{"containers":[{"name":%q,"resources":{"limits":{%q:%q}}}}]}}}}`,
+		`{"spec":{"template":{"spec":{"containers":[{"name":%q,"resources":{"limits":{%q:%q}}}]}}}}`,
 		containerName, resource, to,
 	))
-	return r.Patch(ctx, obj, client.RawPatch(types.MergePatchType, data))
+	// Strategic merge patch: JSON merge patch (RFC 7386) REPLACES the
+	// whole containers array instead of merging by name, which would
+	// wipe image/ports etc.  Strategic merge understands the k8s
+	// patchStrategy for container lists (merge by "name").
+	return r.Patch(ctx, obj, client.RawPatch(types.StrategicMergePatchType, data))
 }
 
 // actionCordon marks a node unschedulable (containment).

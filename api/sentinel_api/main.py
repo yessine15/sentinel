@@ -34,7 +34,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from structlog.processors import JSONRenderer
 
-__version__ = "0.10.0"
+__version__ = "0.11.0"
 
 # ── Configure OpenTelemetry tracing ────────────────────────
 OTEL_ENDPOINT = os.environ.get(
@@ -111,6 +111,10 @@ app.include_router(plans_router)
 from sentinel_api.routes.operator import router as operator_router  # noqa: E402
 
 app.include_router(operator_router)
+
+from sentinel_api.routes.postmortems import router as postmortems_router  # noqa: E402
+
+app.include_router(postmortems_router)
 
 
 @app.get("/ping")

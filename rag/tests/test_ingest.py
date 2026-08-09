@@ -18,10 +18,12 @@ from sentinel_rag.ingest import (
     SparseEncoder,
     _build_points,
     _ensure_collection,
+    _ensure_collection_if_missing,
     _get_qdrant_client,
     ingest,
     ingest_code,
     ingest_markdown,
+    ingest_postmortem,
     ingest_runbook,
     main,
 )
@@ -233,7 +235,9 @@ class TestGetQdrantClient:
         monkeypatch.delenv("QDRANT_API_KEY", raising=False)
         with patch("sentinel_rag.ingest.QdrantClient") as mock_client:
             _get_qdrant_client()
-            mock_client.assert_called_once_with(url="http://localhost:6333")
+            # In-cluster default: k8s service DNS (matches the deployed
+            # Qdrant; local dev overrides via QDRANT_URL).
+            mock_client.assert_called_once_with(url="http://qdrant.qdrant.svc:6333")
 
     def test_custom_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("QDRANT_URL", "http://qdrant:6333")
@@ -454,6 +458,106 @@ class TestSubcommandHandlers:
     def test_ingest_runbook_requires_one_path(self) -> None:
         assert ingest_runbook([]) == 1
         assert ingest_runbook(["a", "b"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Incremental postmortem ingestion (T3.12)
+# ---------------------------------------------------------------------------
+
+
+class TestIngestPostmortem:
+    """ingest_postmortem adds a writeup WITHOUT wiping the collection."""
+
+    _PM_TEXT = (
+        "# Postmortem — pod crash\n\n"
+        "## Summary\n\nPod demo-api OOMKilled 12 times.\n\n"
+        "## Incident\n\nALERTS: kube_pod_oom demo-api\n\n"
+        "## Remediation plan\n\nRaise memory limit 1Gi -> 2Gi.\n"
+    )
+
+    def test_upserts_postmortem_chunks(self) -> None:
+        mock_client = MagicMock()
+        mock_client.collection_exists.return_value = True
+        with (
+            patch("sentinel_rag.ingest.get_embedder", return_value=_FakeEmbedder()),
+            patch("sentinel_rag.ingest._get_qdrant_client", return_value=mock_client),
+        ):
+            count = ingest_postmortem(
+                title="Postmortem — pod crash",
+                content=self._PM_TEXT,
+                plan_id="plan-1",
+            )
+
+        assert count > 0
+        mock_client.upsert.assert_called_once()
+        points = mock_client.upsert.call_args[1]["points"]
+        for p in points:
+            assert p.payload["source_type"] == "postmortem"
+            assert p.payload["plan_id"] == "plan-1"
+            assert p.payload["title"] == "Postmortem — pod crash"
+        # Existing collection is reused — no delete_collection call.
+        mock_client.delete_collection.assert_not_called()
+        mock_client.create_collection.assert_not_called()
+
+    def test_creates_collection_if_missing(self) -> None:
+        mock_client = MagicMock()
+        mock_client.collection_exists.return_value = False
+        with (
+            patch("sentinel_rag.ingest.get_embedder", return_value=_FakeEmbedder()),
+            patch("sentinel_rag.ingest._get_qdrant_client", return_value=mock_client),
+        ):
+            ingest_postmortem(title="t", content=self._PM_TEXT, plan_id="p2")
+
+        mock_client.create_collection.assert_called_once()
+        mock_client.upsert.assert_called_once()
+
+    def test_doc_id_stable_per_plan(self) -> None:
+        """Re-ingesting the same plan overwrites the same points (idempotent)."""
+        mock_client = MagicMock()
+        mock_client.collection_exists.return_value = True
+        with (
+            patch("sentinel_rag.ingest.get_embedder", return_value=_FakeEmbedder()),
+            patch("sentinel_rag.ingest._get_qdrant_client", return_value=mock_client),
+        ):
+            ingest_postmortem(title="t", content=self._PM_TEXT, plan_id="plan-1")
+            ids_1 = [p.id for p in mock_client.upsert.call_args[1]["points"]]
+            ingest_postmortem(title="t", content=self._PM_TEXT, plan_id="plan-1")
+            ids_2 = [p.id for p in mock_client.upsert.call_args[1]["points"]]
+
+        assert ids_1 == ids_2
+
+    def test_empty_content_returns_zero(self) -> None:
+        mock_client = MagicMock()
+        mock_client.collection_exists.return_value = True
+        with (
+            patch("sentinel_rag.ingest.get_embedder", return_value=_FakeEmbedder()),
+            patch("sentinel_rag.ingest._get_qdrant_client", return_value=mock_client),
+        ):
+            count = ingest_postmortem(title="t", content="", plan_id="p3")
+
+        assert count == 0
+        mock_client.upsert.assert_not_called()
+
+
+class TestEnsureCollectionIfMissing:
+    """_ensure_collection_if_missing never wipes an existing collection."""
+
+    def test_skips_when_collection_exists(self) -> None:
+        mock_client = MagicMock()
+        mock_client.collection_exists.return_value = True
+
+        _ensure_collection_if_missing(mock_client, dense_dim=8)
+
+        mock_client.create_collection.assert_not_called()
+        mock_client.delete_collection.assert_not_called()
+
+    def test_creates_when_missing(self) -> None:
+        mock_client = MagicMock()
+        mock_client.collection_exists.return_value = False
+
+        _ensure_collection_if_missing(mock_client, dense_dim=8)
+
+        mock_client.create_collection.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

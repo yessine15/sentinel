@@ -116,6 +116,31 @@ def _ensure_collection(client: QdrantClient, dense_dim: int) -> None:
     )
 
 
+def _ensure_collection_if_missing(client: QdrantClient, dense_dim: int) -> None:
+    """Create the ``sentinel_kb`` collection ONLY if it does not exist.
+
+    Used by incremental ingestion (T3.12 postmortems): unlike
+    :func:`_ensure_collection` this does NOT wipe existing points, so a
+    single postmortem can be added on top of the full KB without
+    re-running the whole pipeline.
+    """
+    if client.collection_exists(COLLECTION_NAME):
+        return
+
+    client.create_collection(
+        collection_name=COLLECTION_NAME,
+        vectors_config={
+            DENSE_VECTOR_NAME: VectorParams(
+                size=dense_dim,
+                distance=Distance.COSINE,
+            )
+        },
+        sparse_vectors_config={
+            SPARSE_VECTOR_NAME: SparseVectorParams(),
+        },
+    )
+
+
 # ======================================================================
 # Sparse encoder — corpus-wide TF-IDF
 # ======================================================================
@@ -315,6 +340,62 @@ def ingest_runbook(paths: list[str]) -> int:
         return 1
     connector = RunbookConnector(paths[0])
     return _run_source(connector, ProseChunker(), paths)
+
+
+# ======================================================================
+# Incremental ingestion — postmortems (T3.12)
+# ======================================================================
+
+
+def ingest_postmortem(
+    title: str,
+    content: str,
+    plan_id: str = "",
+    *,
+    chunker: Chunker | None = None,
+    embedder: Embedder | None = None,
+    client: QdrantClient | None = None,
+) -> int:
+    """Ingest a single postmortem writeup into the knowledge base.
+
+    The Postmortem Agent (T3.12) calls this after an incident has been
+    resolved: the writeup is chunked, embedded and upserted so a later
+    ``/ask`` about that incident retrieves it.
+
+    Unlike the CLI subcommands this does NOT wipe the collection — the
+    collection is created only if missing, then only the postmortem
+    chunks are upserted (incremental ingestion on top of the KB).
+
+    Args:
+        title: Postmortem title (stored in the point payload).
+        content: The full markdown postmortem text.
+        plan_id: The remediation plan id the postmortem belongs to
+            (used for the stable doc id + path).
+
+    Returns:
+        The number of chunks stored in Qdrant.
+    """
+    from sentinel_rag.sources.base import Document
+
+    safe_id = plan_id or "unknown"
+    doc = Document(
+        doc_id=f"postmortem:{safe_id}",
+        source_type="postmortem",
+        path=f"postmortems/{safe_id}.md",
+        line_start=0,
+        line_end=0,
+        text=content,
+        metadata={
+            "title": title,
+            "plan_id": safe_id,
+            "kind": "postmortem",
+        },
+    )
+    chunker = chunker or ProseChunker()
+    embedder = embedder or get_embedder()
+    client = client or _get_qdrant_client()
+    _ensure_collection_if_missing(client, embedder.dimension)
+    return ingest([doc], chunker, embedder, client)
 
 
 # ======================================================================

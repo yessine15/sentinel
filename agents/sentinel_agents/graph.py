@@ -116,6 +116,12 @@ class AgentState(TypedDict):
             Executor Agent after approval (T3.7).
         executor_status: ``"pending"`` / ``"created"`` / ``"preview"`` /
             ``"blocked"`` — set by the Executor Agent (T3.7).
+        postmortem: The drafted postmortem writeup (T3.12) — a dict with
+            ``id`` (persisted row), ``content`` (markdown), ``status``
+            (drafted/ingested/failed), ``chunks`` and ``verification``.
+        postmortem_status: ``"skipped"`` / ``"drafted"`` /
+            ``"ingested"`` / ``"failed"`` — set by the Postmortem Agent
+            (T3.12).
     """
 
     messages: Annotated[list[BaseMessage], add_messages]
@@ -131,6 +137,9 @@ class AgentState(TypedDict):
     # ── T3.7 executor channels ──
     remediation_plan: dict[str, Any]
     executor_status: str
+    # ── T3.12 postmortem channels ──
+    postmortem: dict[str, Any]
+    postmortem_status: str
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1361,15 +1370,19 @@ def executor_agent_node(state: AgentState) -> dict[str, Any]:
     return {"messages": [ai_msg], "scratchpad": sp, "executor_status": "pending"}
 
 
-def should_continue_executor(state: AgentState) -> Literal["executor_tools", "__end__"]:
-    """Route executor tool calls through the executor_tools ToolNode."""
+def should_continue_executor(state: AgentState) -> Literal["executor_tools", "postmortem"]:
+    """Route executor tool calls through the executor_tools ToolNode.
+
+    T3.12: once the executor has finished (no pending tool calls), the
+    resume graph continues to the Postmortem Agent instead of ending.
+    """
     messages = state.get("messages", [])
     if not messages:
-        return "__end__"
+        return "postmortem"
     last = messages[-1]
     if isinstance(last, AIMessage) and last.tool_calls:
         return "executor_tools"
-    return "__end__"
+    return "postmortem"
 
 
 def should_resume(state: AgentState) -> Literal["executor", "__end__"]:
@@ -1377,6 +1390,165 @@ def should_resume(state: AgentState) -> Literal["executor", "__end__"]:
     if state.get("approval_status") == "approved":
         return "executor"
     return "__end__"
+
+
+# ─────────────────────────────────────────────────────────────
+# Postmortem Agent (T3.12) — closes the loop
+# ─────────────────────────────────────────────────────────────
+def _fetch_plan_verification(plan_name: str, namespace: str = "") -> dict[str, Any]:
+    """Read a RemediationPlan's status back from the cluster (read-only).
+
+    The operator applies and verifies the plan asynchronously; the
+    postmortem records whatever state is observable at write time.
+
+    Returns ``{"state": ..., "message": ..., "verified_at": ...}``, or a
+    ``state: "unknown"`` dict on any failure (stub mode, kubectl
+    missing, RBAC, non-JSON output) — never raises.
+    """
+    from sentinel_agents.tools.base import is_stub, run_subprocess
+
+    if is_stub():
+        return {
+            "state": "unknown",
+            "message": "verification not readable in stub mode",
+            "verified_at": "",
+        }
+    try:
+        cmd = [
+            "kubectl", "get", "remediationplan", plan_name,
+            "-o", "json", "--ignore-not-found=true",
+        ]
+        if namespace:
+            cmd += ["-n", namespace]
+        out = run_subprocess(cmd, timeout=15)
+        data = json.loads(out)
+    except Exception:
+        return {"state": "unknown", "message": "verification not readable", "verified_at": ""}
+    status = data.get("status", {}) if isinstance(data, dict) else {}
+    return {
+        "state": str(status.get("state", "unknown")),
+        "message": str(status.get("message", "")),
+        "verified_at": str(status.get("verifiedAt", "") or ""),
+    }
+
+
+def postmortem_agent_node(state: AgentState) -> dict[str, Any]:
+    """The Postmortem Agent (T3.12) — the final node of the resume graph.
+
+    After the Executor Agent has created the RemediationPlan (incident
+    resolved), this node:
+
+    1. collects the incident, specialist assessment, approved plan,
+       executor result and (where readable) operator verification state;
+    2. drafts a deterministic markdown postmortem (no LLM — the writeup
+       must never invent facts);
+    3. stores it in Postgres (``postmortems`` table; memory fallback);
+    4. spawns the KB ingestion job — embeds the writeup into Qdrant so a
+       later ``/ask`` query about the incident retrieves it.
+
+    Degrades gracefully: every external call is wrapped, and failures
+    are recorded in ``postmortem_status`` (``"failed"``) instead of
+    raising, so the resume graph always terminates.
+    """
+    sp = dict(state.get("scratchpad", {}))
+    sp["postmortem_visited"] = True
+
+    # Idempotency guard — the node runs once after the executor finishes.
+    if sp.get("postmortem_written"):
+        return {
+            "scratchpad": sp,
+            "postmortem": state.get("postmortem") or sp.get("postmortem", {}),
+            "postmortem_status": state.get("postmortem_status") or sp.get("postmortem_status", "drafted"),
+        }
+
+    # Only write a postmortem when a plan was actually created.
+    if (
+        state.get("approval_status") != "approved"
+        or state.get("executor_status") != "created"
+    ):
+        sp["postmortem_status"] = "skipped"
+        return {"scratchpad": sp, "postmortem_status": "skipped"}
+
+    incident = state.get("incident") or sp.get("incident", "")
+    synthesis = state.get("synthesis") or sp.get("synthesis", "")
+    plan = state.get("plan") or sp.get("plan") or sp.get("pending_plan", {})
+    plan_ref = str(sp.get("plan_ref", ""))
+    remediation_plan = state.get("remediation_plan") or sp.get("remediation_plan", {})
+    rp_name = str(remediation_plan.get("name", "") or sp.get("remediation_plan_name", ""))
+    rp_namespace = str(remediation_plan.get("namespace", "") or "")
+
+    verification = (
+        _fetch_plan_verification(rp_name, rp_namespace)
+        if rp_name
+        else {"state": "unknown", "message": "", "verified_at": ""}
+    )
+
+    # 2 — draft the writeup (deterministic template).
+    try:
+        from sentinel_api.postmortem import build_postmortem_markdown
+
+        content = build_postmortem_markdown(
+            incident=incident,
+            synthesis=synthesis,
+            plan=plan,
+            executor_result=remediation_plan,
+            verification=verification,
+            plan_ref=plan_ref,
+        )
+    except Exception as exc:  # pragma: no cover - sentinel_api import edge
+        sp["postmortem_status"] = "failed"
+        sp["postmortem_error"] = str(exc)[:300]
+        return {"scratchpad": sp, "postmortem_status": "failed"}
+
+    # 3 — persist to Postgres (memory fallback inside the store factory).
+    pm_id = ""
+    try:
+        from sentinel_api.postmortems import create_postmortem
+
+        pm = create_postmortem(incident=incident, content=content, plan_id=plan_ref)
+        pm_id = pm.id
+    except Exception as exc:  # pragma: no cover - store factory edge
+        sp["postmortem_status"] = "failed"
+        sp["postmortem_error"] = f"store: {exc}"[:300]
+        return {"scratchpad": sp, "postmortem_status": "failed"}
+
+    # 4 — spawn the KB ingestion job (embed into Qdrant, no wipe).
+    ingest_status = "drafted"
+    chunks = 0
+    try:
+        from sentinel_rag.ingest import ingest_postmortem
+
+        chunks = ingest_postmortem(
+            title=f"Postmortem — {incident.strip().splitlines()[0][:80]}",
+            content=content,
+            plan_id=pm_id or plan_ref,
+        )
+        ingest_status = "ingested"
+    except Exception as exc:
+        ingest_status = "failed"
+        sp["postmortem_ingest_error"] = str(exc)[:300]
+
+    try:
+        from sentinel_api.postmortems import set_postmortem_status
+
+        set_postmortem_status(pm_id, ingest_status)
+    except Exception:  # pragma: no cover - status writeback edge
+        pass
+
+    sp["postmortem_written"] = True
+    sp["postmortem"] = {
+        "id": pm_id,
+        "content": content,
+        "status": ingest_status,
+        "chunks": chunks,
+        "verification": verification,
+    }
+    sp["postmortem_status"] = ingest_status
+    return {
+        "scratchpad": sp,
+        "postmortem": sp["postmortem"],
+        "postmortem_status": ingest_status,
+    }
 
 
 def build_resume_graph() -> StateGraph:
@@ -1387,11 +1559,18 @@ def build_resume_graph() -> StateGraph:
     T3.7: START → approval → (approved → executor → executor_tools →
     executor → END | rejected/awaiting → END).  The executor creates
     the RemediationPlan object only after human approval.
+
+    T3.12: after the executor finishes, the Postmortem Agent drafts the
+    incident writeup, stores it in Postgres and embeds it into Qdrant:
+    START → approval → executor → executor_tools → executor →
+    postmortem → END.
     """
     builder = StateGraph(AgentState)
     builder.add_node("approval", approval_node)
     builder.add_node("executor", executor_agent_node)
     builder.add_node("executor_tools", ToolNode(EXECUTOR_TOOLS))
+    # T3.12
+    builder.add_node("postmortem", postmortem_agent_node)
     builder.set_entry_point("approval")
     builder.add_conditional_edges(
         "approval",
@@ -1401,9 +1580,10 @@ def build_resume_graph() -> StateGraph:
     builder.add_conditional_edges(
         "executor",
         should_continue_executor,
-        {"executor_tools": "executor_tools", "__end__": END},
+        {"executor_tools": "executor_tools", "postmortem": "postmortem"},
     )
     builder.add_edge("executor_tools", "executor")
+    builder.add_edge("postmortem", END)
     return builder.compile()
 
 
@@ -1422,6 +1602,11 @@ def resume_plan_graph(plan: dict[str, Any], decision: str) -> str:
     T3.7: an ``"approved"`` decision also runs the Executor Agent,
     which creates the RemediationPlan object in the cluster.
 
+    T3.12: an ``"approved"`` decision additionally runs the Postmortem
+    Agent, which drafts the writeup, stores it in Postgres and embeds
+    it into Qdrant (see :func:`resume_plan_graph_detailed` for the full
+    outcome).
+
     Args:
         plan: The persisted plan dict (as returned by the plans API).
         decision: ``"approved"`` or ``"rejected"``.
@@ -1437,9 +1622,11 @@ def resume_plan_graph(plan: dict[str, Any], decision: str) -> str:
 def resume_plan_graph_detailed(plan: dict[str, Any], decision: str) -> dict[str, Any]:
     """Like :func:`resume_plan_graph` but returns the full outcome.
 
-    Returns a dict with ``approval_status`` plus the executor result
-    (``executor_status`` and ``remediation_plan``) so the plans API /
-    UI can report what actually happened after approval.
+    Returns a dict with ``approval_status``, the executor result
+    (``executor_status`` and ``remediation_plan``) and the T3.12
+    postmortem outcome (``postmortem_status`` and ``postmortem``) so
+    the plans API / UI can report what actually happened after
+    approval.
     """
     state: AgentState = {
         "messages": [],
@@ -1460,12 +1647,22 @@ def resume_plan_graph_detailed(plan: dict[str, Any], decision: str) -> dict[str,
         "approval_status": "",
         "remediation_plan": {},
         "executor_status": "",
+        "postmortem": {},
+        "postmortem_status": "",
     }
     result = _resume_graph.invoke(state)
+    # T3.12: when the plan was NOT approved the postmortem node never
+    # runs — report the explicit ``skipped`` status for a clean API
+    # contract instead of an empty string.
+    postmortem_status = result.get("postmortem_status") or ""
+    if not postmortem_status and decision != "approved":
+        postmortem_status = "skipped"
     return {
         "approval_status": result.get("approval_status", "awaiting_approval"),
         "executor_status": result.get("executor_status", ""),
         "remediation_plan": result.get("remediation_plan", {}),
+        "postmortem_status": postmortem_status,
+        "postmortem": result.get("postmortem", {}),
     }
 
 

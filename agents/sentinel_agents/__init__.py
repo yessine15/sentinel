@@ -12,6 +12,9 @@ Phase 3 (T3.7+): Executor Agent — the only agent that can act; emits
                  RemediationPlan objects via the operator bridge.
 Phase 3 (T3.8+): Kubebuilder operator scaffold — RemediationPlan CRD
                  generated from Go types (sentinel.io/v1).
+Phase 3 (T3.12+): Postmortem Agent — drafts the incident writeup after
+                 resolution, stores it in Postgres and embeds it into
+                 the KB (Qdrant) so /ask retrieves it.
 """
 
-__version__ = "0.10.0"
+__version__ = "0.11.0"
