@@ -497,7 +497,7 @@ the safe execution bridge.
     sample manifest at `config/samples/sentinel_v1_remediationplan.yaml`;
     generated CRD copied to `gitops/components/operator/crd.yaml`.
 
-- [ ] **T3.9 Implement reconcile loop**
+- [x] **T3.9 Implement reconcile loop**
   - Goal: operator acts on approved plans and verifies them.
   - Steps: reconcile switches on `status.state`:
     `Proposed` → wait;
@@ -506,6 +506,34 @@ the safe execution bridge.
     `Verified` → after cooldown → `Closed`.
   - Done when: applying an approved RemediationPlan scales a Deployment and
     its status flips to `Verified` once metrics recover.
+  - Implemented: full lifecycle in
+    `operator/internal/controller/remediationplan_controller.go` — pure
+    `nextState(current, dryRun, approved, success, verified, cooldownDone)`
+    state machine: `` → Proposed → (approvedBy set) Approved → (actions
+    OK) Applied → (targets healthy) Verified → (cooldown) Closed; failures
+    → Failed; dry-run plans never advance past Proposed.  Reconcile
+    switches on status.state with requeues: Applied re-checks targets
+    every OPERATOR_VERIFY_INTERVAL_SECONDS (default 5s), Verified closes
+    after OPERATOR_COOLDOWN_SECONDS (default 60s).  Executor actions in
+    `internal/controller/actions.go`: Go mirror of ALLOWED_EXECUTOR_ACTIONS
+    (restart, scale, rollback, cordon, drain, patch, delete_pod, escalate
+    — delete/exec/create blocked), target parser (kind/name), replica
+    parser, resource-change parser (memory/cpu `from -> to`); implemented
+    actions: restart (rollout-restart annotation patch), scale
+    (spec.replicas patch), patch (resource limits on first container),
+    cordon (node unschedulable), delete_pod; rollback/drain explicitly not
+    implemented yet (plan → Failed with clear message); escalate requires
+    a human.  Verification (`verifyTargets`) waits for workload health:
+    deployment ready+updated replicas, statefulset ready replicas, node
+    unschedulable (cordon), pod exists.  RBAC markers added for
+    deployments/statefulsets/daemonsets (get/list/watch/patch), pods
+    (get/list/watch/delete), nodes (get/list/watch/patch) — regenerated
+    into config/rbac/role.yaml.  14 Go unit tests (state machine + action
+    helpers); gofmt/vet/build clean.  Live acceptance: approved scale
+    plan drove demo-api 1→2 replicas, status watched `ready=1/2` →
+    `plan verified` → `Closed`; restart action set the restartedAt
+    annotation; dry-run stayed Proposed; `delete` action → Failed
+    ("step action delete is NOT allowed").
 
 - [ ] **T3.10 RBAC + ServiceAccount (least privilege)**
   - Goal: operator pod can only touch what it needs.

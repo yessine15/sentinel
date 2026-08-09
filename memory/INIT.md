@@ -414,13 +414,35 @@
   `config/samples/sentinel_v1_remediationplan.yaml`; generated CRD
   copied to `gitops/components/operator/crd.yaml`.  Go tests: 2
   packages OK; Python: 311 passed / 10 skipped.
+- [x] **T3.9 Reconcile loop** (2026-08-09): Full lifecycle in
+  `operator/internal/controller/remediationplan_controller.go` — pure
+  `nextState(current, dryRun, approved, success, verified, cooldownDone)`
+  machine: `` → Proposed → Approved (approvedBy set) → Applied (actions
+  OK) → Verified (targets healthy) → Closed (cooldown); failure → Failed;
+  dry-run never advances.  Reconcile requeues: Applied re-verifies every
+  OPERATOR_VERIFY_INTERVAL_SECONDS (5s), Verified closes after
+  OPERATOR_COOLDOWN_SECONDS (60s).  Executor actions in
+  `internal/controller/actions.go` — Go mirror of ALLOWED_EXECUTOR_ACTIONS
+  (restart/scale/rollback/cordon/drain/patch/delete_pod/escalate;
+  delete/exec/create blocked), target parser (kind/name), replica parser,
+  resource parser (memory/cpu from→to); implemented: restart (restartedAt
+  annotation), scale (replicas), patch (limits), cordon (unschedulable),
+  delete_pod; rollback/drain → Failed (not implemented); escalate →
+  human.  Verification: deployment ready+updated replicas, statefulset
+  ready, node unschedulable, pod exists.  RBAC markers → role.yaml
+  (deployments/sts/ds get,list,watch,patch; pods get,list,watch,delete;
+  nodes get,list,watch,patch).  14 Go unit tests (state machine + action
+  helpers); gofmt/vet/build clean.  Live acceptance: approved scale plan
+  drove demo-api 1→2 replicas, watched `ready=1/2` → `plan verified` →
+  `Closed`; restart set restartedAt annotation; dry-run stayed Proposed;
+  `delete` action → Failed.  Python: 311 passed / 10 skipped.
 - [ ] Phase 4: Security hardening.
 - [ ] Phase 5: Polish, evals, portfolio.
 
-> **We are at:** Phase 3 in progress. T3.1–T3.8 done. T3.9 next.
-> **Next up:** T3.9 — Implement the reconcile loop (Proposed → Approved →
-> Applied → Verified → Closed; applying an approved RemediationPlan
-> scales a Deployment and flips status to Verified once metrics recover).
+> **We are at:** Phase 3 in progress. T3.1–T3.9 done. T3.10 next.
+> **Next up:** T3.10 — RBAC + ServiceAccount (least privilege: ClusterRole
+> with read on pods/deployments + write on RemediationPlan status + patch
+> on deployments/nodes, bound to the operator's ServiceAccount).
 > **Foundation:** kind cluster, ingress-nginx, ArgoCD (App-of-Apps), full
 > observability stack (Prometheus, Alertmanager, Grafana, Loki, Tempo),
 > Qdrant vector DB, Postgres 16 + pgvector, LiteLLM gateway at
