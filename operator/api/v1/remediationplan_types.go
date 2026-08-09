@@ -83,6 +83,13 @@ type RemediationPlanStatus struct {
 	// +optional
 	Message string `json:"message,omitempty"`
 
+	// VerifiedAt records when the plan entered the Verified state — the
+	// cooldown before Closing is measured from this timestamp (T3.11 fix:
+	// status updates trigger watch events, so without this the Verified
+	// state was re-reconciled immediately and Closed instantly).
+	// +optional
+	VerifiedAt *metav1.Time `json:"verifiedAt,omitempty"`
+
 	// ObservedGeneration is the metadata.generation this status reflects.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`

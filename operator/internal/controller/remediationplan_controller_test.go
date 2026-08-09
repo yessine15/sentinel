@@ -105,3 +105,13 @@ func TestLifecycleStateConstants(t *testing.T) {
 		seen[s] = true
 	}
 }
+
+func TestNextStateVerifiedGuard(t *testing.T) {
+	// Regression (T3.11): the Verified reconcile must not panic when
+	// VerifiedAt is nil (watch-event race).  The guard is in Reconcile,
+	// but the state machine itself must keep Verified stable until the
+	// cooldown completes.
+	if got := nextState(StateVerified, false, true, true, true, false); got != StateVerified {
+		t.Fatalf("nextState(Verified, cooldown pending) = %q, want Verified", got)
+	}
+}

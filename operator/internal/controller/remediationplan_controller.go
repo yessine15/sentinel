@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -181,6 +182,11 @@ func (r *RemediationPlanReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		ok, errMsg := r.verifyTargets(ctx, plan)
 		if ok {
 			log.Info("plan verified", "name", req.Name)
+			// Record when we entered Verified IN THE SAME status update so
+			// watch events can never observe Verified without a timestamp
+			// (and the cooldown is measured from a real moment).
+			now := metav1.Now()
+			plan.Status.VerifiedAt = &now
 			if err := r.setState(ctx, plan, StateVerified, "Targets healthy — closing after cooldown."); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -193,7 +199,26 @@ func (r *RemediationPlanReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{RequeueAfter: verifyInterval()}, nil
 
 	case StateVerified:
-		// Reached only after the cooldown requeue fired.
+		// Close only once the cooldown (measured from VerifiedAt) has
+		// actually elapsed.  Status-update watch events fire immediately
+		// after the Applied→Verified transition, so we must compare
+		// against the timestamp instead of assuming this reconcile is the
+		// cooldown requeue.
+		if plan.Status.VerifiedAt == nil {
+			// Race guard: a watch event observed Verified before the
+			// timestamp was persisted — set it now and requeue.
+			now := metav1.Now()
+			plan.Status.VerifiedAt = &now
+			if err := r.Status().Update(ctx, plan); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{RequeueAfter: cooldown()}, nil
+		}
+		elapsed := time.Since(plan.Status.VerifiedAt.Time)
+		remaining := cooldown() - elapsed
+		if remaining > 0 {
+			return ctrl.Result{RequeueAfter: remaining}, nil
+		}
 		log.Info("plan closed", "name", req.Name)
 		return ctrl.Result{}, r.setState(ctx, plan, StateClosed, "Closed.")
 

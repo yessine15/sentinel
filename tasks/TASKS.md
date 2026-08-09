@@ -568,11 +568,37 @@ the safe execution bridge.
     Forbidden test (Forbidden on pod delete → error propagates →
     nextState → Failed) + delete_pod happy path with permission.
 
-- [ ] **T3.11 Deploy operator via GitOps**
+- [x] **T3.11 Deploy operator via GitOps**
   - Goal:_OPERATOR runs in cluster, managed by ArgoCD.
   - Steps: build operator image; Helm chart under
     `gitops/projects/operator/`; ArgoCD syncs it.
   - Done when: ArgoCD shows the operator Deployment healthy.
+  - Implemented: operator image built locally
+    (`ghcr.io/yessine15/sentinel-operator:local`, distroless, 33MB) and
+    loaded into all kind nodes via `kind load docker-image`.  Self-
+    contained Helm chart `gitops/projects/operator/` (Chart.yaml,
+    values.yaml, templates: namespace operator-system, ServiceAccount
+    sentinel-operator, ClusterRole + ClusterRoleBinding mirroring the
+    least-privilege rules, Deployment with OPERATOR_COOLDOWN_SECONDS /
+    OPERATOR_VERIFY_INTERVAL_SECONDS env).  ArgoCD Application
+    `gitops/argocd/apps/sentinel-operator.yaml` (auto-sync, prune,
+    selfHeal, CreateNamespace) discovered by the root App-of-Apps.  Old
+    manually-applied T3.10 RBAC removed (chart owns RBAC now).
+    Infrastructure fixes required along the way: kind node containers
+    restarted (CoreDNS + kube-proxy were crash-looping after 42 days —
+    cluster DNS was down, ArgoCD couldn't resolve the repo-server);
+    ArgoCD application-controller was OOM-killed (256Mi limit) — bumped
+    to 1Gi.  **Real bug found + fixed**: the Verified→Closed cooldown
+    was skipped (status-update watch events re-reconciled Verified
+    instantly) and panicked when verifiedAt was nil; fixed by recording
+    `status.verifiedAt` in the same status update as the Verified
+    transition + a nil-race guard in the Verified case; CRD regenerated
+    (verifiedAt field added — the old CRD pruned it).  Verified
+    end-to-end in-cluster: scale plan on a non-ArgoCD-managed test
+    workload → deploy 1→3, state Verified with verifiedAt recorded, then
+    Closed exactly after the 60s cooldown.  Acceptance: ArgoCD shows the
+    sentinel-operator Application **Synced + Healthy**, Deployment
+    ready 1/1.
 
 ## M3.4 Loop closure
 - [ ] **T3.12 Postmortem Agent**

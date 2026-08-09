@@ -456,13 +456,33 @@
   writable status, action verbs, no workload delete) + fake-client
   Forbidden test + delete_pod happy path.  Go tests green; Python 311
   passed / 10 skipped.
+- [x] **T3.11 Deploy operator via GitOps** (2026-08-09): Operator image
+  built (ghcr.io/yessine15/sentinel-operator:local, distroless 33MB),
+  loaded into kind.  Self-contained Helm chart
+  `gitops/projects/operator/` (namespace operator-system, SA
+  sentinel-operator, ClusterRole + Binding mirroring least-privilege
+  rules, Deployment with cooldown/verify env) + ArgoCD Application
+  discovered by the root App-of-Apps.  Old manual T3.10 RBAC removed.
+  Infra fixes along the way: kind node containers restarted (CoreDNS +
+  kube-proxy crash-looping after 42 days → cluster DNS down → ArgoCD
+  couldn't resolve repo-server); ArgoCD application-controller OOM
+  (256Mi limit → 1Gi).  REAL BUG found + fixed: Verified→Closed
+  cooldown was skipped (status-update watch events re-reconciled
+  Verified instantly) and panicked on nil verifiedAt; fix = record
+  status.verifiedAt in the same status update as the transition + nil
+  guard; CRD regenerated (verifiedAt pruned by old CRD schema).
+  Verified live: scale plan on non-ArgoCD test workload → deploy
+  1→3, Verified (verifiedAt set), Closed exactly after 60s cooldown.
+  Acceptance: ArgoCD sentinel-operator Application **Synced + Healthy**,
+  Deployment ready 1/1.  Go + Python suites green (311 passed).
 - [ ] Phase 4: Security hardening.
 - [ ] Phase 5: Polish, evals, portfolio.
 
-> **We are at:** Phase 3 in progress. T3.1–T3.10 done. T3.11 next.
-> **Next up:** T3.11 — Deploy the operator via GitOps (build operator image,
-> Helm chart under gitops/projects/operator/, ArgoCD syncs it → ArgoCD
-> shows the operator Deployment healthy).
+> **We are at:** Phase 3 in progress. T3.1–T3.11 done. T3.12 next.
+> **Next up:** T3.12 — Postmortem Agent (draft a postmortem from the
+> incident state + actions + verification, store in Postgres, spawn an
+> ingestion job that embeds it into Qdrant → a /ask query about the
+> incident returns the freshly-written postmortem).
 > **Foundation:** kind cluster, ingress-nginx, ArgoCD (App-of-Apps), full
 > observability stack (Prometheus, Alertmanager, Grafana, Loki, Tempo),
 > Qdrant vector DB, Postgres 16 + pgvector, LiteLLM gateway at

@@ -180,6 +180,14 @@ spec:
                   State is the lifecycle state driven by the reconcile loop (T3.9):
                   Proposed → Approved → Applied → Verified → Closed.
                 type: string
+              verifiedAt:
+                description: |-
+                  VerifiedAt records when the plan entered the Verified state — the
+                  cooldown before Closing is measured from this timestamp (T3.11 fix:
+                  status updates trigger watch events, so without this the Verified
+                  state was re-reconciled immediately and Closed instantly).
+                format: date-time
+                type: string
             type: object
         required:
         - spec

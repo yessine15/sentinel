@@ -70,10 +70,10 @@ func TestRBACPlanReadOnly(t *testing.T) {
 func TestRBACPlanStatusWritable(t *testing.T) {
 	y := roleYAML(t)
 	// ...but the operator MUST write the status subresource.
-	if !containsVerb(y, "resources:\n  - remediationplans/status\n  verbs:\n  - update") {
+	if !containsVerb(y, "resources:\n  - remediationplans/status\n  verbs:\n  - get\n  - patch\n  - update") {
 		t.Fatal("role.yaml must grant update on remediationplans/status")
 	}
-	if !containsVerb(y, "resources:\n  - remediationplans/status\n  verbs:\n  - patch") {
+	if !containsVerb(y, "resources:\n  - remediationplans/status\n  verbs:\n  - get\n  - patch\n  - update") {
 		t.Fatal("role.yaml must grant patch on remediationplans/status")
 	}
 }
@@ -82,10 +82,10 @@ func TestRBACActionPermissions(t *testing.T) {
 	y := roleYAML(t)
 	// delete_pod action needs pod delete; cordon needs node patch;
 	// restart/scale/patch need workload patch.
-	if !containsVerb(y, "resources:\n  - pods\n  verbs:\n  - delete") {
+	if !containsVerb(y, "resources:\n  - pods\n  verbs:\n  - delete\n  - get\n  - list\n  - watch") {
 		t.Fatal("role.yaml must grant delete on pods (delete_pod action)")
 	}
-	if !containsVerb(y, "resources:\n  - nodes\n  verbs:\n  - patch") {
+	if !containsVerb(y, "resources:\n  - nodes\n  verbs:\n  - get\n  - list\n  - patch\n  - watch") {
 		t.Fatal("role.yaml must grant patch on nodes (cordon action)")
 	}
 	// The operator must NOT be able to delete workloads (only patch).
@@ -121,7 +121,7 @@ func TestForbiddenOnDeleteFailsCleanly(t *testing.T) {
 	// ClusterRole without pods/delete.
 	fc := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(
 		interceptor.Funcs{
-			Delete: func(ctx context.Context, client client.Client, obj client.Object, opts ...client.DeleteOption) error {
+			Delete: func(ctx context.Context, client client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
 				return apierrors.NewForbidden(
 					schema.GroupResource{Group: "", Resource: "pods"},
 					obj.GetName(),
