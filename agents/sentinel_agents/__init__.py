@@ -10,6 +10,8 @@ Phase 3 (T3.6+): Human-in-the-loop approval — plans persisted in Postgres,
                  approve/reject API unblocks the graph.
 Phase 3 (T3.7+): Executor Agent — the only agent that can act; emits
                  RemediationPlan objects via the operator bridge.
+Phase 3 (T3.8+): Kubebuilder operator scaffold — RemediationPlan CRD
+                 generated from Go types (sentinel.io/v1).
 """
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"

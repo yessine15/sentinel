@@ -465,13 +465,37 @@ the safe execution bridge.
     cluster; T3.8 regenerates it from Go types).
 
 ## M3.3 The Kubernetes operator
-- [ ] **T3.8 Scaffold Kubebuilder operator**
+- [x] **T3.8 Scaffold Kubebuilder operator**
   - Goal: a compilable Go operator skeleton.
   - Steps: `kubebuilder init --domain sentinel.io`; `kubebuilder create api
     --group sentinel --version v1 --kind RemediationPlan`; generate types
     in `/operator/api/v1/`.
   - Done when: `make manifests` produces the CRD YAML; `make install` installs
     it into the kind cluster.
+  - Implemented: Kubebuilder v4.15.0 project in `/operator` (module
+    `github.com/yessine15/sentinel/operator`, Go 1.26 toolchain via
+    GOTOOLCHAIN=auto, controller-runtime).  API types in
+    `operator/api/v1/remediationplan_types.go` — `RemediationPlanSpec`
+    {incident, priority, rationale, dryRun, approvedBy, planRef,
+    steps[{action, target, detail}]} matching the T3.7 bridge manifests;
+    `RemediationPlanStatus` {state, message, observedGeneration,
+    conditions} matching the T3.9 state machine (Proposed → Approved →
+    Applied → Verified → Closed); group corrected to `sentinel.io`
+    (+groupName marker + GroupVersion) so the CRD is
+    `remediationplans.sentinel.io` exactly like T3.7; kubebuilder
+    printcolumns (State/Priority/DryRun/Age).  `make manifests` generates
+    `config/crd/bases/sentinel.io_remediationplans.yaml` + RBAC roles
+    (sentinel.io group); `make install` installs it (verified: applied
+    over the T3.7 minimal CRD, sample object created with printer
+    columns).  Controller skeleton in
+    `operator/internal/controller/remediationplan_controller.go` — pure
+    `nextState(current, dryRun)` state-machine helper (empty → Proposed;
+    dry-run never advances) + minimal Reconcile that initialises status
+    state; envtest suite replaced with plain Go unit tests (no kube-
+    apiserver binaries needed in CI); `make build` produces bin/manager.
+    CI go job bumped to go-version 1.26 (go.mod requires it).  Realistic
+    sample manifest at `config/samples/sentinel_v1_remediationplan.yaml`;
+    generated CRD copied to `gitops/components/operator/crd.yaml`.
 
 - [ ] **T3.9 Implement reconcile loop**
   - Goal: operator acts on approved plans and verifies them.

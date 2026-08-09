@@ -392,13 +392,35 @@
   probe fallback), YAML serializer didn't quote `: ` in incident text
   (kubectl 502 → quote colons/brackets/hashes), executor infinite
   loop on non-JSON tool errors (stop + executor_status=blocked).
+- [x] **T3.8 Kubebuilder operator scaffold** (2026-08-09, v0.10.0):
+  Real operator project in `/operator` (Kubebuilder v4.15.0, module
+  github.com/yessine15/sentinel/operator, Go 1.26 via GOTOOLCHAIN=auto).
+  API types `api/v1/remediationplan_types.go`: RemediationPlanSpec
+  {incident, priority, rationale, dryRun, approvedBy, planRef,
+  steps[{action,target,detail}]} — matches the T3.7 bridge manifests;
+  RemediationPlanStatus {state, message, observedGeneration, conditions}
+  with lifecycle states Proposed → Approved → Applied → Verified →
+  Closed (T3.9 implements transitions).  Group corrected to
+  `sentinel.io` via +groupName marker + GroupVersion so the CRD is
+  `remediationplans.sentinel.io` (same as T3.7); kubebuilder print
+  columns State/Priority/DryRun/Age.  `make manifests` → generated CRD
+  + RBAC (sentinel.io); `make install` → installed in kind (replaced
+  the T3.7 minimal CRD; sample object validated with printer columns);
+  `make build` → bin/manager (74MB).  Controller skeleton with pure
+  `nextState(current, dryRun)` helper + Reconcile that initialises
+  status to Proposed; envtest suite replaced with plain Go unit tests
+  (no kube-apiserver binaries — CI stays light); CI go job bumped to
+  go 1.26.  Sample manifest
+  `config/samples/sentinel_v1_remediationplan.yaml`; generated CRD
+  copied to `gitops/components/operator/crd.yaml`.  Go tests: 2
+  packages OK; Python: 311 passed / 10 skipped.
 - [ ] Phase 4: Security hardening.
 - [ ] Phase 5: Polish, evals, portfolio.
 
-> **We are at:** Phase 3 in progress. T3.1–T3.7 done. T3.8 next.
-> **Next up:** T3.8 — Scaffold Kubebuilder operator (RemediationPlan CRD
-> from Go types; `make manifests` / `make install` replaces the minimal
-> CRD installed in T3.7).
+> **We are at:** Phase 3 in progress. T3.1–T3.8 done. T3.9 next.
+> **Next up:** T3.9 — Implement the reconcile loop (Proposed → Approved →
+> Applied → Verified → Closed; applying an approved RemediationPlan
+> scales a Deployment and flips status to Verified once metrics recover).
 > **Foundation:** kind cluster, ingress-nginx, ArgoCD (App-of-Apps), full
 > observability stack (Prometheus, Alertmanager, Grafana, Loki, Tempo),
 > Qdrant vector DB, Postgres 16 + pgvector, LiteLLM gateway at
@@ -410,7 +432,9 @@
 > tools (kubectl get/describe, PromQL, LogQL, RAG search, rag_evidence,
 > trivy_scan, cve_lookup, falco_events, tetragon_events,
 > kube_resource_usage, create_remediation_plan), RemediationPlan CRD
-> (sentinel.io/v1) installed in the cluster, Next.js 15 chat UI with
+> (sentinel.io/v1) generated from Go types (Kubebuilder operator in
+> /operator; `make manifests`/`make install`/`make build` all working)
+> and installed in the cluster, Next.js 15 chat UI with
 > streaming answers + clickable citation chips + remediation plan cards
 > (Approve/Reject), Helm chart + ArgoCD Application for frontend
 > deployment at http://sentinel.local.

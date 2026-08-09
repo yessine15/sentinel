@@ -1,0 +1,20 @@
+apiVersion: sentinel.io/v1
+kind: RemediationPlan
+metadata:
+  labels:
+    app.kubernetes.io/part-of: sentinel
+  name: remediationplan-sample
+spec:
+  incident: "ALERTS: [1] kube_pod_oom severity=critical namespace=sentinel pod=demo-api-7d9-abcde"
+  priority: high
+  rationale: "demo-api pod OOMKilled 12 times in 10m — memory limit too low."
+  dryRun: false
+  approvedBy: "human"
+  planRef: "00000000-0000-0000-0000-000000000000"
+  steps:
+    - action: restart
+      target: deployment/demo-api
+      detail: "Rollout-restart to clear the bad state."
+    - action: patch
+      target: deployment/demo-api
+      detail: "Raise memory limit 1Gi -> 2Gi."
