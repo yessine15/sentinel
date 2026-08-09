@@ -436,13 +436,33 @@
   drove demo-api 1→2 replicas, watched `ready=1/2` → `plan verified` →
   `Closed`; restart set restartedAt annotation; dry-run stayed Proposed;
   `delete` action → Failed.  Python: 311 passed / 10 skipped.
+- [x] **T3.10 RBAC + ServiceAccount** (2026-08-09): ClusterRole
+  `manager-role` trimmed to least privilege (controller markers):
+  remediationplans get/list/watch ONLY (no create/delete/update/patch —
+  the bridge creates plans), remediationplans/status get/update/patch,
+  finalizers update, deployments/sts/ds get/list/watch/patch, pods
+  get/list/watch/delete, nodes get/list/watch/patch.  SA
+  `controller-manager` (system ns) + ClusterRoleBinding
+  `manager-rolebinding` verified; manager.yaml has serviceAccountName.
+  Applied via `kubectl apply -k config/rbac`.  Live proof with a real
+  token kubeconfig as the SA: read plans OK, status subresource write
+  OK (real patch verified), delete pods/patch nodes/patch deployments
+  OK; create plans / patch main plan / delete deployments → denied.
+  Acceptance — dropping a permission breaks an action cleanly: operator
+  run under SA kubeconfig → delete_pod plan OK (pod deleted, Closed);
+  removed pods/delete from ClusterRole → new delete_pod plan → **Failed**
+  with clean Forbidden message, pod untouched; permission restored.
+  New Go tests: RBAC contract tests on role.yaml (read-only plans,
+  writable status, action verbs, no workload delete) + fake-client
+  Forbidden test + delete_pod happy path.  Go tests green; Python 311
+  passed / 10 skipped.
 - [ ] Phase 4: Security hardening.
 - [ ] Phase 5: Polish, evals, portfolio.
 
-> **We are at:** Phase 3 in progress. T3.1–T3.9 done. T3.10 next.
-> **Next up:** T3.10 — RBAC + ServiceAccount (least privilege: ClusterRole
-> with read on pods/deployments + write on RemediationPlan status + patch
-> on deployments/nodes, bound to the operator's ServiceAccount).
+> **We are at:** Phase 3 in progress. T3.1–T3.10 done. T3.11 next.
+> **Next up:** T3.11 — Deploy the operator via GitOps (build operator image,
+> Helm chart under gitops/projects/operator/, ArgoCD syncs it → ArgoCD
+> shows the operator Deployment healthy).
 > **Foundation:** kind cluster, ingress-nginx, ArgoCD (App-of-Apps), full
 > observability stack (Prometheus, Alertmanager, Grafana, Loki, Tempo),
 > Qdrant vector DB, Postgres 16 + pgvector, LiteLLM gateway at

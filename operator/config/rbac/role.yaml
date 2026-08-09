@@ -38,12 +38,8 @@ rules:
   resources:
   - remediationplans
   verbs:
-  - create
-  - delete
   - get
   - list
-  - patch
-  - update
   - watch
 - apiGroups:
   - sentinel.io

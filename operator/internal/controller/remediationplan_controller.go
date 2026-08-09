@@ -115,7 +115,10 @@ type RemediationPlanReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=sentinel.io,resources=remediationplans,verbs=get;list;watch;create;update;patch;delete
+// T3.10: least-privilege RBAC — the operator only reads RemediationPlan
+// objects and writes their status. It never creates/deletes plans (the
+// bridge does that), so those verbs are deliberately absent.
+// +kubebuilder:rbac:groups=sentinel.io,resources=remediationplans,verbs=get;list;watch
 // +kubebuilder:rbac:groups=sentinel.io,resources=remediationplans/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=sentinel.io,resources=remediationplans/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=deployments;statefulsets;daemonsets,verbs=get;list;watch;patch

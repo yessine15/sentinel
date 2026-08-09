@@ -535,12 +535,38 @@ the safe execution bridge.
     annotation; dry-run stayed Proposed; `delete` action → Failed
     ("step action delete is NOT allowed").
 
-- [ ] **T3.10 RBAC + ServiceAccount (least privilege)**
+- [x] **T3.10 RBAC + ServiceAccount (least privilege)**
   - Goal: operator pod can only touch what it needs.
   - Steps: a `ClusterRole` granting read on pods/deployments + write on
     RemediationPlan status + patch on deployments/nodes (allow-listed);
     bind to operator's ServiceAccount via `ClusterRoleBinding`.
   - Done when: dropping a permission breaks a specific action cleanly.
+  - Implemented: ClusterRole `manager-role` trimmed to least privilege
+    via controller markers — remediationplans: get;list;watch ONLY
+    (create/delete/update/patch deliberately absent — the bridge creates
+    plans); remediationplans/status: get;update;patch;
+    remediationplans/finalizers: update; deployments/statefulsets/
+    daemonsets: get;list;watch;patch; pods: get;list;watch;delete;
+    nodes: get;list;watch;patch.  Regenerated config/rbac/role.yaml.
+    ServiceAccount `controller-manager` (namespace system) + ClusterRole
+    `manager-role` + ClusterRoleBinding `manager-rolebinding` (already
+    scaffolded; verified applied) — manager.yaml already sets
+    serviceAccountName: controller-manager.  RBAC applied to the kind
+    cluster via `kubectl apply -k config/rbac`.  Live proof with a real
+    token-based kubeconfig for the SA: can get/list/watch plans, can
+    patch/update plans/status (real subresource write verified), can
+    delete pods / patch nodes / patch deployments; CANNOT create plans,
+    CANNOT patch the main plan resource, CANNOT delete deployments.
+    Acceptance (dropping a permission breaks an action cleanly): ran
+    the operator under the SA kubeconfig → delete_pod plan succeeded
+    (pod deleted, plan Closed); removed `delete` from pods in the
+    ClusterRole → new delete_pod plan → status **Failed** with a clean
+    Forbidden message ("cannot delete resource pods") and the pod was
+    untouched; restored the permission.  New Go tests: RBAC contract
+    tests reading config/rbac/role.yaml (plans read-only, status
+    writable, action verbs present, no workload delete) + fake-client
+    Forbidden test (Forbidden on pod delete → error propagates →
+    nextState → Failed) + delete_pod happy path with permission.
 
 - [ ] **T3.11 Deploy operator via GitOps**
   - Goal:_OPERATOR runs in cluster, managed by ArgoCD.
